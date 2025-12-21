@@ -1,0 +1,37 @@
+I'm working on a Gold Engulfing EA for MT5. Here's what you need to know:
+
+STRATEGY:
+- H1 XAUUSD only
+- Detects engulfing candles (opposite colors, bar 1 engulfs bar 2)
+- Places 10 limit orders (0.01 lots each) across engulfed candle body
+- 3-3-4 distribution (3 top, 3 mid, 4 bottom)
+- $4 SL, $8 TP per order (1:2 RR)
+- First TP hit = cancel all remaining orders
+
+ARCHITECTURE:
+- 9 modular files (Main EA + 8 .mqh modules)
+- Main: GoldEngulfing_Main.mq5
+- Modules: Config, Utils, EngulfingDetector, VisualManager, OrderManager, 
+           SetupManager, StorageSystem, TableLogger
+
+STATE MACHINE:
+UNTAPPED (yellow lines) → TAPPED (red lines) → COMPLETE (removed)
+                       ↓ (14 days)
+                    EXPIRED
+
+PERSISTENCE:
+- JSON files save all setup states
+- Survives EA restart
+- Time-based IDs prevent duplicates: "Engulf_DDMMYYYY-HHMM-B/S"
+
+KEY STRUCT:
+EngulfingSetup {
+  setupID, magicNumber, times, prices, state, orders, profit...
+}
+
+FILES I'LL SHARE:
+[Then attach the relevant files you need help with]
+
+CURRENT TASK:
+[Describe what you need help with]
+```
