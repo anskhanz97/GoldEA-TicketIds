@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                                                        Utils.mqh  |
 //|                              Gold Engulfing EA - Utility Functions|
-//|                              v2.1 - 2-STATE SYSTEM                |
+//|                              v2.1 - 2-STATE SYSTEM Compatible     |
 //+------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
@@ -46,20 +46,49 @@ string GenerateSetupID(datetime engulfingTime, datetime engulfedTime, bool isBul
 }
 
 //+------------------------------------------------------------------+
-//| Generate Magic Number from Setup ID                              |
+//| ✅ FIXED: Generate UNIQUE Magic Number from Setup ID             |
+//| OLD: Only used date (collisions!)                                |
+//| NEW: Uses date + time + direction for uniqueness                 |
 //+------------------------------------------------------------------+
 int GenerateMagicNumber(string setupID) {
-   int startPos = 7;
-   int length = 8;
-   string numStr = StringSubstr(setupID, startPos, length);
+   // setupID format: "Engulf_18122025-1200-S"
+   //                          ^^^^^^^^ ^^^^ ^
+   //                          date     time dir
    
+   // Extract the unique part: "18122025-1200-S" (skip "Engulf_")
+   string uniquePart = StringSubstr(setupID, 7); // Skip "Engulf_"
+   
+   // Use a better hash that includes ALL characters
    int hash = 0;
-   for(int i = 0; i < StringLen(numStr); i++) {
-      hash = hash * 31 + StringGetCharacter(numStr, i);
+   for(int i = 0; i < StringLen(uniquePart); i++) {
+      hash = hash * 37 + StringGetCharacter(uniquePart, i); // Use prime 37
    }
    
-   return MathAbs(hash % 1000000);
+   // Ensure positive and within MT5's magic number range
+   int magic = MathAbs(hash % 900000) + 100000; // Range: 100000-999999
+   
+   // Debug output to verify uniqueness
+   Print("🔑 Magic for ", setupID, " = ", magic);
+   
+   return magic;
 }
+
+//+------------------------------------------------------------------+
+//| ✅ NEW: Verify Magic Number Uniqueness                           |
+//+------------------------------------------------------------------+
+bool IsMagicNumberUnique(int magicNumber, string setupID) {
+   for(int i = 0; i < ArraySize(g_allSetups); i++) {
+      if(g_allSetups[i].magicNumber == magicNumber && 
+         g_allSetups[i].setupID != setupID) {
+         Print("⚠️ COLLISION DETECTED!");
+         Print("   Setup 1: ", setupID, " → Magic: ", magicNumber);
+         Print("   Setup 2: ", g_allSetups[i].setupID, " → Magic: ", g_allSetups[i].magicNumber);
+         return false;
+      }
+   }
+   return true;
+}
+
 
 //+------------------------------------------------------------------+
 //| Generate Line Object Names from Setup ID                         |
@@ -142,67 +171,6 @@ bool IsEngulfingWithTolerance(double engulfing_high, double engulfing_low,
    
    return (highCheck && lowCheck);
 }
-
-//+------------------------------------------------------------------+
-//| Check if Order Exists at Specific Price with Setup ID            |
-//+------------------------------------------------------------------+
-bool OrderExistsAtPrice(double price, string setupID) {
-   price = NormalizeDouble(price, _Digits);
-   
-   for(int i = OrdersTotal() - 1; i >= 0; i--) {
-      ulong ticket = OrderGetTicket(i);
-      if(ticket <= 0) continue;
-      
-      if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
-      if(OrderGetString(ORDER_COMMENT) != setupID) continue;
-      
-      double orderPrice = NormalizeDouble(OrderGetDouble(ORDER_PRICE_OPEN), _Digits);
-      if(orderPrice == price) {
-         return true;
-      }
-   }
-   
-   return false;
-}
-
-//+------------------------------------------------------------------+
-//| Count Pending Orders for Setup                                   |
-//+------------------------------------------------------------------+
-int CountPendingOrders(string setupID) {
-   int count = 0;
-   
-   for(int i = OrdersTotal() - 1; i >= 0; i--) {
-      ulong ticket = OrderGetTicket(i);
-      if(ticket <= 0) continue;
-      
-      if(OrderGetString(ORDER_SYMBOL) == _Symbol && 
-         OrderGetString(ORDER_COMMENT) == setupID) {
-         count++;
-      }
-   }
-   
-   return count;
-}
-
-//+------------------------------------------------------------------+
-//| Count Executed Positions for Setup                               |
-//+------------------------------------------------------------------+
-int CountExecutedPositions(string setupID, int magicNumber) {
-   int count = 0;
-   
-   for(int i = PositionsTotal() - 1; i >= 0; i--) {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket <= 0) continue;
-      
-      if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
-         PositionGetInteger(POSITION_MAGIC) == magicNumber) {
-         count++;
-      }
-   }
-   
-   return count;
-}
-
 //+------------------------------------------------------------------+
 //| Send Alert (if enabled)                                          |
 //+------------------------------------------------------------------+
@@ -287,86 +255,3 @@ string FormatPrice(double price) {
 string FormatTime(datetime time) {
    return TimeToString(time, TIME_DATE|TIME_MINUTES);
 }
-
-//+------------------------------------------------------------------+
-//| Check if Pattern Already Exists (Time-Based)                     |
-//+------------------------------------------------------------------+
-bool PatternAlreadyExists(datetime engulfingTime, datetime engulfedTime) {
-    for(int i = 0; i < ArraySize(g_allSetups); i++) {
-        if(g_allSetups[i].engulfingTime == engulfingTime && 
-           g_allSetups[i].engulfedTime == engulfedTime) {
-            return true;
-        }
-    }
-    return false;
-}
-
-//+------------------------------------------------------------------+
-//| Check if Range Was Tapped After Formation                        |
-//+------------------------------------------------------------------+
-bool CheckIfRangeTapped(EngulfingSetup &setup, datetime endTime) {
-    int startBar = iBarShift(_Symbol, PERIOD_H1, setup.engulfingTime);
-    if(startBar == -1) return false;
-    
-    for(int i = startBar; i >= 0; i--) {
-        datetime barTime = iTime(_Symbol, PERIOD_H1, i);
-        
-        if(barTime > endTime) break;
-        if(barTime == setup.engulfingTime) continue;
-        
-        double high = iHigh(_Symbol, PERIOD_H1, i);
-        double low = iLow(_Symbol, PERIOD_H1, i);
-        
-        if(low <= setup.rangeHigh && high >= setup.rangeLow) {
-            setup.tappedTime = barTime;
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-//+------------------------------------------------------------------+
-//| Check if Setup Has Existing Orders                               |
-//+------------------------------------------------------------------+
-bool SetupHasExistingOrders(string setupID) {
-    int magicNumber = GenerateMagicNumber(setupID);
-    
-    int totalOrders = OrdersTotal();
-    for(int i = 0; i < totalOrders; i++) {
-        ulong ticket = OrderGetTicket(i);
-        if(OrderSelect(ticket)) {
-            if(OrderGetInteger(ORDER_MAGIC) == magicNumber) {
-                return true;
-            }
-        }
-    }
-    
-    int totalPositions = PositionsTotal();
-    for(int i = 0; i < totalPositions; i++) {
-        ulong ticket = PositionGetTicket(i);
-        if(PositionSelectByTicket(ticket)) {
-            if(PositionGetInteger(POSITION_MAGIC) == magicNumber) {
-                return true;
-            }
-        }
-    }
-    
-    return false;
-}
-
-//+------------------------------------------------------------------+
-//| Check if Can Place Orders for Setup                              |
-//+------------------------------------------------------------------+
-bool CanPlaceOrdersForSetup(EngulfingSetup &setup) {
-    if(setup.ordersPlacedFlag) return false;
-    if(setup.tapped) return false;
-    
-    datetime currentTime = TimeCurrent();
-    int ageInDays = (int)((currentTime - setup.engulfingTime) / 86400);
-    if(ageInDays > InpLookbackDays) return false;
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+

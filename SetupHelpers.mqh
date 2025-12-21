@@ -1,39 +1,572 @@
 //+------------------------------------------------------------------+
-//|                                               SetupHelpers.mqh    |
-//|                    Gold Engulfing EA - Setup Helper Functions     |
-//|                    v2.1 - 2-State System Compatible               |
+//|                                            SetupHelpers.mqh       |
+//|                    Gold Engulfing EA - Helper Functions v3.0      |
+//|                    ✅ COMPLETE IMPLEMENTATION                     |
 //+------------------------------------------------------------------+
 
+// Forward declarations
+bool CheckMT5HistoryForSetup(EngulfingSetup &setup);
+void RecoverTicketsFromMT5History(EngulfingSetup &setup);
+
 //+------------------------------------------------------------------+
-//| Count Total Fills (from history + current positions)             |
+//| Revalidate Untapped Setups (Check if still valid)               |
 //+------------------------------------------------------------------+
-int CountTotalFills(EngulfingSetup &setup) {
-   int fillCount = 0;
+void RevalidateUntappedSetups() {
+   Print("\n🔍 Revalidating untapped setups...");
    
-   // Count from history (closed positions)
-   if(HistorySelect(setup.createdTime, TimeCurrent())) {
-      for(int i = HistoryDealsTotal() - 1; i >= 0; i--) {
-         ulong ticket = HistoryDealGetTicket(i);
-         if(ticket <= 0) continue;
+   int revalidatedCount = 0;
+   int tappedCount = 0;
+   
+   for(int i = 0; i < ArraySize(g_allSetups); i++) {
+      if(g_allSetups[i].state == SETUP_UNTAPPED) {
+         revalidatedCount++;
          
-         if(HistoryDealGetInteger(ticket, DEAL_MAGIC) != setup.magicNumber) continue;
-         if(HistoryDealGetString(ticket, DEAL_SYMBOL) != _Symbol) continue;
+         // Check if range was tapped since creation
+         bool wasTapped = CheckIfRangeTappedSinceCreation(g_allSetups[i]);
          
-         // Count entry deals (BUY or SELL)
-         if(HistoryDealGetInteger(ticket, DEAL_ENTRY) == DEAL_ENTRY_IN) {
-            fillCount++;
+         if(wasTapped) {
+            // Determine if MISSED or TRADED based on tickets
+            if(ArraySize(g_allSetups[i].orderTickets) > 0) {
+               // Has tickets → TRADED
+               g_allSetups[i].state = SETUP_TAPPED;
+               g_allSetups[i].tapped = true;
+               g_allSetups[i].tradeStatus = TRADE_STATUS_TRADED;
+               g_allSetups[i].wasTraded = true;
+               g_totalSetupsTraded++;
+            } else {
+               // No tickets → MISSED
+               g_allSetups[i].state = SETUP_TAPPED;
+               g_allSetups[i].tapped = true;
+               g_allSetups[i].tradeStatus = TRADE_STATUS_MISSED;
+               g_allSetups[i].wasMissed = true;
+               g_totalSetupsMissed++;
+            }
+            
+            g_allSetups[i].tappedTime = TimeCurrent();
+            RedrawTappedLines(g_allSetups[i]);
+            tappedCount++;
+            
+            Print("   ⚠️ ", g_allSetups[i].setupID, " was tapped → Status: ", 
+                  GetTradeStatusName(g_allSetups[i].tradeStatus));
          }
       }
    }
    
-   // Add current open positions
-   fillCount += CountExecutedPositions(setup.setupID, setup.magicNumber);
+   Print("✅ Revalidated ", revalidatedCount, " setups (", tappedCount, " found tapped)\n");
+}
+
+//+------------------------------------------------------------------+
+//| ✅ NEW: Check MT5 History for Setup Trades (WITH DIAGNOSTICS)    |
+//+------------------------------------------------------------------+
+bool CheckMT5HistoryForSetup(EngulfingSetup &setup) {
+   // 🔍 DIAGNOSTIC: Show what we're looking for
+   if(InpDebugMode) {
+      Print("   🔎 Checking MT5 history for: ", setup.setupID);
+      Print("      Magic: ", setup.magicNumber);
+      Print("      Created: ", TimeToString(setup.createdTime, TIME_DATE|TIME_MINUTES));
+   }
+   
+   // Load history from setup creation time (use engulfingTime for broader search)
+   datetime searchStart = setup.engulfingTime - 3600; // 1 hour before
+   datetime searchEnd = TimeCurrent();
+   
+   if(!HistorySelect(searchStart, searchEnd)) {
+      if(InpDebugMode) Print("      ❌ HistorySelect failed!");
+      return false;
+   }
+   
+   int totalHistoryOrders = HistoryOrdersTotal();
+   int matchedOrders = 0;
+   int filledOrders = 0;
+   
+   if(InpDebugMode) Print("      📊 Total history orders: ", totalHistoryOrders);
+   
+   // ✅ FIX: Search by BOTH magic number AND comment (fallback)
+   for(int i = 0; i < totalHistoryOrders; i++) {
+      ulong ticket = HistoryOrderGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      int orderMagic = (int)HistoryOrderGetInteger(ticket, ORDER_MAGIC);
+      string orderSymbol = HistoryOrderGetString(ticket, ORDER_SYMBOL);
+      string orderComment = HistoryOrderGetString(ticket, ORDER_COMMENT);
+      
+      // Match by symbol AND (magic OR comment contains setupID)
+      bool magicMatch = (orderMagic == setup.magicNumber);
+      bool commentMatch = (StringFind(orderComment, setup.setupID) >= 0);
+      
+      if(orderSymbol == _Symbol && (magicMatch || commentMatch)) {
+         matchedOrders++;
+         
+         // Found an order for this setup
+         ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(ticket, ORDER_STATE);
+         
+         if(InpDebugMode) {
+            Print("      ✅ Found order #", ticket, " | Magic: ", orderMagic, 
+                  " | Comment: ", orderComment, " | State: ", EnumToString(state));
+         }
+         
+         // If any order was filled, this setup was TRADED
+         if(state == ORDER_STATE_FILLED) {
+            filledOrders++;
+         }
+      }
+   }
+   
+   if(InpDebugMode) {
+      Print("      📈 Matched: ", matchedOrders, " orders | Filled: ", filledOrders);
+   }
+   
+   return (filledOrders > 0);
+}
+
+//+------------------------------------------------------------------+
+//| ✅ NEW: Recover Tickets from MT5 History (WITH COMMENT FALLBACK) |
+//+------------------------------------------------------------------+
+void RecoverTicketsFromMT5History(EngulfingSetup &setup) {
+   // Clear existing arrays
+   ArrayResize(setup.orderTickets, 0);
+   ArrayResize(setup.filledTickets, 0);
+   ArrayResize(setup.cancelledTickets, 0);
+   
+   datetime searchStart = setup.engulfingTime - 3600; // 1 hour before
+   
+   if(!HistorySelect(searchStart, TimeCurrent())) {
+      return;
+   }
+   
+   // Collect all orders for this setup
+   for(int i = 0; i < HistoryOrdersTotal(); i++) {
+      ulong ticket = HistoryOrderGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      int orderMagic = (int)HistoryOrderGetInteger(ticket, ORDER_MAGIC);
+      string orderSymbol = HistoryOrderGetString(ticket, ORDER_SYMBOL);
+      string orderComment = HistoryOrderGetString(ticket, ORDER_COMMENT);
+      
+      // ✅ Match by magic OR comment
+      bool magicMatch = (orderMagic == setup.magicNumber);
+      bool commentMatch = (StringFind(orderComment, setup.setupID) >= 0);
+      
+      if(orderSymbol != _Symbol) continue;
+      if(!magicMatch && !commentMatch) continue;
+      
+      // Add to orderTickets array
+      int idx = ArraySize(setup.orderTickets);
+      ArrayResize(setup.orderTickets, idx + 1);
+      setup.orderTickets[idx] = ticket;
+      
+      // Categorize by state
+      ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(ticket, ORDER_STATE);
+      
+      if(state == ORDER_STATE_FILLED) {
+         idx = ArraySize(setup.filledTickets);
+         ArrayResize(setup.filledTickets, idx + 1);
+         setup.filledTickets[idx] = ticket;
+         
+      } else if(state == ORDER_STATE_CANCELED) {
+         idx = ArraySize(setup.cancelledTickets);
+         ArrayResize(setup.cancelledTickets, idx + 1);
+         setup.cancelledTickets[idx] = ticket;
+      }
+   }
+   
+   // Update counts
+   setup.ordersPlaced = ArraySize(setup.orderTickets);
+   setup.ordersFilled = ArraySize(setup.filledTickets);
+   setup.ordersCancelled = ArraySize(setup.cancelledTickets);
+   setup.ordersPlacedFlag = (setup.ordersPlaced > 0);
+   
+   if(InpDebugMode) {
+      Print("      📝 Recovered ", setup.ordersPlaced, " tickets (", 
+            setup.ordersFilled, " filled, ", setup.ordersCancelled, " cancelled)");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check if Setup Has Trade History                                |
+//+------------------------------------------------------------------+
+bool CheckSetupTradeHistory(EngulfingSetup &setup) {
+   // If no tickets stored, check history directly
+   if(ArraySize(setup.orderTickets) == 0) {
+      return CheckHistoryForSetup(setup);
+   }
+   
+   // Check if any stored tickets were filled
+   for(int i = 0; i < ArraySize(setup.orderTickets); i++) {
+      ulong ticket = setup.orderTickets[i];
+      
+      if(HistoryOrderSelect(ticket)) {
+         ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(ticket, ORDER_STATE);
+         if(state == ORDER_STATE_FILLED) {
+            return true;  // Found filled order
+         }
+      }
+   }
+   
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check History for Setup (Legacy Method)                         |
+//+------------------------------------------------------------------+
+bool CheckHistoryForSetup(EngulfingSetup &setup) {
+   if(!HistorySelect(setup.createdTime, TimeCurrent())) {
+      return false;
+   }
+   
+   // Search for orders with matching magic number
+   for(int i = 0; i < HistoryOrdersTotal(); i++) {
+      ulong ticket = HistoryOrderGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(HistoryOrderGetInteger(ticket, ORDER_MAGIC) == setup.magicNumber &&
+         HistoryOrderGetString(ticket, ORDER_SYMBOL) == _Symbol) {
+         
+         ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(ticket, ORDER_STATE);
+         if(state == ORDER_STATE_FILLED) {
+            return true;
+         }
+      }
+   }
+   
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Update Order Counts from History                                |
+//+------------------------------------------------------------------+
+void UpdateOrderCountsFromHistory(EngulfingSetup &setup) {
+   if(!HistorySelect(setup.createdTime, TimeCurrent())) {
+      Print("⚠️ Cannot access history for ", setup.setupID);
+      return;
+   }
+   
+   int ordersPlaced = 0;
+   int ordersFilled = 0;
+   int ordersCancelled = 0;
+   
+   // If we have stored tickets, use them
+   if(ArraySize(setup.orderTickets) > 0) {
+      ordersPlaced = ArraySize(setup.orderTickets);
+      
+      for(int i = 0; i < ArraySize(setup.orderTickets); i++) {
+         ulong ticket = setup.orderTickets[i];
+         
+         if(HistoryOrderSelect(ticket)) {
+            ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(ticket, ORDER_STATE);
+            
+            if(state == ORDER_STATE_FILLED) {
+               ordersFilled++;
+            } else if(state == ORDER_STATE_CANCELED) {
+               ordersCancelled++;
+            }
+         }
+      }
+   } else {
+      // Legacy method - scan by magic number
+      for(int i = 0; i < HistoryOrdersTotal(); i++) {
+         ulong ticket = HistoryOrderGetTicket(i);
+         if(ticket <= 0) continue;
+         
+         if(HistoryOrderGetInteger(ticket, ORDER_MAGIC) != setup.magicNumber) continue;
+         if(HistoryOrderGetString(ticket, ORDER_SYMBOL) != _Symbol) continue;
+         
+         ordersPlaced++;
+         
+         ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(ticket, ORDER_STATE);
+         
+         if(state == ORDER_STATE_FILLED) {
+            ordersFilled++;
+         } else if(state == ORDER_STATE_CANCELED) {
+            ordersCancelled++;
+         }
+      }
+   }
+   
+   // Update setup
+   setup.ordersPlaced = ordersPlaced;
+   setup.ordersFilled = ordersFilled;
+   setup.ordersCancelled = ordersCancelled;
+   
+   if(ordersPlaced > 0) {
+      setup.ordersPlacedFlag = true;
+   }
+   
+   DebugPrint(StringFormat("Updated counts for %s: %d placed | %d filled | %d cancelled", 
+                          setup.setupID, ordersPlaced, ordersFilled, ordersCancelled));
+}
+
+//+------------------------------------------------------------------+
+//| Count Total Fills from History                                  |
+//+------------------------------------------------------------------+
+int CountTotalFills(EngulfingSetup &setup) {
+   if(!HistorySelect(setup.createdTime, TimeCurrent())) {
+      return 0;
+   }
+   
+   int fillCount = 0;
+   
+   for(int i = 0; i < HistoryOrdersTotal(); i++) {
+      ulong ticket = HistoryOrderGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(HistoryOrderGetInteger(ticket, ORDER_MAGIC) != setup.magicNumber) continue;
+      if(HistoryOrderGetString(ticket, ORDER_SYMBOL) != _Symbol) continue;
+      
+      ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(ticket, ORDER_STATE);
+      if(state == ORDER_STATE_FILLED) {
+         fillCount++;
+      }
+   }
    
    return fillCount;
 }
 
 //+------------------------------------------------------------------+
-//| Validate Setup Before Processing                                 |
+//| Count Pending Orders for Setup                                  |
+//+------------------------------------------------------------------+
+int CountPendingOrders(string setupID) {
+   int count = 0;
+   
+   for(int i = 0; i < OrdersTotal(); i++) {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
+      if(OrderGetString(ORDER_COMMENT) != setupID) continue;
+      
+      count++;
+   }
+   
+   return count;
+}
+
+//+------------------------------------------------------------------+
+//| Count Executed Positions for Setup                              |
+//+------------------------------------------------------------------+
+int CountExecutedPositions(string setupID, int magicNumber) {
+   int count = 0;
+   
+   for(int i = 0; i < PositionsTotal(); i++) {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != magicNumber) continue;
+      
+      count++;
+   }
+   
+   return count;
+}
+
+//+------------------------------------------------------------------+
+//| Check if Order Exists at Price                                  |
+//+------------------------------------------------------------------+
+bool OrderExistsAtPrice(double price, string setupID) {
+   for(int i = 0; i < OrdersTotal(); i++) {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
+      if(OrderGetString(ORDER_COMMENT) != setupID) continue;
+      
+      double orderPrice = OrderGetDouble(ORDER_PRICE_OPEN);
+      if(MathAbs(orderPrice - price) < 0.001) {
+         return true;
+      }
+   }
+   
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check if Setup Has Existing Orders                              |
+//+------------------------------------------------------------------+
+bool SetupHasExistingOrders(string setupID) {
+   // Check pending orders
+   for(int i = 0; i < OrdersTotal(); i++) {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
+      
+      string comment = OrderGetString(ORDER_COMMENT);
+      if(StringFind(comment, setupID) >= 0) {
+         return true;
+      }
+   }
+   
+   // Check open positions
+   for(int i = 0; i < PositionsTotal(); i++) {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      
+      string comment = PositionGetString(POSITION_COMMENT);
+      if(StringFind(comment, setupID) >= 0) {
+         return true;
+      }
+   }
+   
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Can Place Orders for Setup?                                     |
+//+------------------------------------------------------------------+
+bool CanPlaceOrdersForSetup(EngulfingSetup &setup) {
+   // Already placed?
+   if(setup.ordersPlacedFlag) {
+      DebugPrint("Orders already placed for: " + setup.setupID);
+      return false;
+   }
+   
+   // Already tapped?
+   if(setup.tapped) {
+      DebugPrint("Setup already tapped: " + setup.setupID);
+      return false;
+   }
+   
+   // Check if orders already exist
+   if(SetupHasExistingOrders(setup.setupID)) {
+      DebugPrint("Orders already exist for: " + setup.setupID);
+      return false;
+   }
+   
+   // Check if setup is too old
+   int ageInDays = (int)((TimeCurrent() - setup.engulfingTime) / 86400);
+   if(ageInDays > 7) {
+      DebugPrint("Setup too old: " + setup.setupID + " (" + IntegerToString(ageInDays) + " days)");
+      return false;
+   }
+   
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Find Setup by ID                                                |
+//+------------------------------------------------------------------+
+int FindSetupByID(string setupID) {
+   for(int i = 0; i < ArraySize(g_allSetups); i++) {
+      if(g_allSetups[i].setupID == setupID) {
+         return i;
+      }
+   }
+   return -1;
+}
+
+//+------------------------------------------------------------------+
+//| Check if Pattern Already Exists                                 |
+//+------------------------------------------------------------------+
+bool PatternAlreadyExists(datetime engulfingTime, datetime engulfedTime) {
+   for(int i = 0; i < ArraySize(g_allSetups); i++) {
+      if(g_allSetups[i].engulfingTime == engulfingTime && 
+         g_allSetups[i].engulfedTime == engulfedTime) {
+         return true;
+      }
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check if Range Was Tapped (General)                             |
+//+------------------------------------------------------------------+
+bool CheckIfRangeTapped(EngulfingSetup &setup, datetime endTime) {
+   int startBar = iBarShift(_Symbol, PERIOD_H1, setup.engulfingTime);
+   if(startBar == -1) return false;
+   
+   for(int i = startBar; i >= 0; i--) {
+      datetime barTime = iTime(_Symbol, PERIOD_H1, i);
+      
+      if(barTime > endTime) break;
+      if(barTime == setup.engulfingTime) continue;
+      
+      double high = iHigh(_Symbol, PERIOD_H1, i);
+      double low = iLow(_Symbol, PERIOD_H1, i);
+      
+      if(low <= setup.rangeHigh && high >= setup.rangeLow) {
+         setup.tappedTime = barTime;
+         return true;
+      }
+   }
+   
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check if Range Was Tapped Since Creation                        |
+//+------------------------------------------------------------------+
+bool CheckIfRangeTappedSinceCreation(EngulfingSetup &setup) {
+   int startBar = iBarShift(_Symbol, PERIOD_H1, setup.engulfingTime);
+   if(startBar == -1) {
+      DebugPrint("Cannot find bar for setup: " + setup.setupID);
+      return false;
+   }
+   
+   for(int i = startBar; i >= 0; i--) {
+      datetime barTime = iTime(_Symbol, PERIOD_H1, i);
+      
+      // Skip the engulfing candle itself
+      if(barTime == setup.engulfingTime) continue;
+      
+      double high = iHigh(_Symbol, PERIOD_H1, i);
+      double low = iLow(_Symbol, PERIOD_H1, i);
+      
+      // Check if this bar touched the range
+      if(low <= setup.rangeHigh && high >= setup.rangeLow) {
+         setup.tappedTime = barTime;
+         return true;
+      }
+   }
+   
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Is Valid Setup Index?                                           |
+//+------------------------------------------------------------------+
+bool IsValidSetupIndex(int index) {
+   if(index < 0 || index >= ArraySize(g_allSetups)) {
+      Print("ERROR: Invalid setup index: ", index);
+      return false;
+   }
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Setup Statistics                                      |
+//+------------------------------------------------------------------+
+void CalculateSetupStatistics(EngulfingSetup &setup) {
+   int totalTrades = setup.positionsClosed;
+   
+   if(totalTrades == 0) {
+      setup.winRate = 0;
+      setup.profitFactor = 0;
+      setup.averageWin = 0;
+      setup.averageLoss = 0;
+      return;
+   }
+   
+   int wins = setup.tpHits;
+   int losses = setup.slHits;
+   
+   // Win Rate
+   setup.winRate = (totalTrades > 0) ? (double)wins / totalTrades * 100.0 : 0;
+   
+   // Profit Factor
+   setup.profitFactor = (setup.grossLoss != 0) ? 
+                       MathAbs(setup.grossProfit / setup.grossLoss) : 
+                       (setup.grossProfit > 0 ? 999.0 : 0);
+   
+   // Average Win/Loss
+   setup.averageWin = (wins > 0) ? setup.grossProfit / wins : 0;
+   setup.averageLoss = (losses > 0) ? setup.grossLoss / losses : 0;
+}
+
+//+------------------------------------------------------------------+
+//| Validate Setup Data                                             |
 //+------------------------------------------------------------------+
 bool ValidateSetup(EngulfingSetup &setup) {
    if(setup.setupID == "") {
@@ -55,7 +588,7 @@ bool ValidateSetup(EngulfingSetup &setup) {
 }
 
 //+------------------------------------------------------------------+
-//| Get Setup Age in Days                                            |
+//| Get Setup Age in Days                                           |
 //+------------------------------------------------------------------+
 int GetSetupAge(EngulfingSetup &setup) {
    datetime currentTime = TimeCurrent();
@@ -63,254 +596,75 @@ int GetSetupAge(EngulfingSetup &setup) {
 }
 
 //+------------------------------------------------------------------+
-//| Get Setup Direction String                                       |
+//| Get Setup Direction String                                      |
 //+------------------------------------------------------------------+
 string GetSetupDirection(EngulfingSetup &setup) {
    return setup.isBullish ? "BULLISH" : "BEARISH";
 }
 
 //+------------------------------------------------------------------+
-//| Get Setup Range Size in Pips                                     |
+//| ✅ NEW: Manual Recovery - Fix ALL Missed Setups from MT5 History |
 //+------------------------------------------------------------------+
-double GetSetupRangePips(EngulfingSetup &setup) {
-   return PointsToPips(setup.rangeHigh - setup.rangeLow);
-}
-
-//+------------------------------------------------------------------+
-//| Check if Setup Has Any Active Trades                             |
-//+------------------------------------------------------------------+
-bool SetupHasActiveTrades(EngulfingSetup &setup) {
-   int pendingCount = CountPendingOrders(setup.setupID);
-   int positionCount = CountExecutedPositions(setup.setupID, setup.magicNumber);
+void ManualRecoveryFromMT5() {
+   Print("\n╔════════════════════════════════════════════════════════════════╗");
+   Print("║  🔧 MANUAL RECOVERY MODE - Checking MT5 History               ║");
+   Print("╚════════════════════════════════════════════════════════════════╝\n");
    
-   return (pendingCount > 0 || positionCount > 0);
-}
-
-//+------------------------------------------------------------------+
-//| Get Setup Summary String (one-liner)                             |
-//+------------------------------------------------------------------+
-string GetSetupSummary(EngulfingSetup &setup) {
-   return StringFormat("%s | %s | %s | Age:%dd | Orders:%d/%d | P/L:$%.2f",
-                      setup.setupID,
-                      GetSetupDirection(setup),
-                      GetStateName(setup.state),
-                      GetSetupAge(setup),
-                      setup.ordersFilled,
-                      setup.ordersPlaced,
-                      setup.totalProfit);
-}
-
-//+------------------------------------------------------------------+
-//| Check if Setup is Profitable                                     |
-//+------------------------------------------------------------------+
-bool IsSetupProfitable(EngulfingSetup &setup) {
-   return setup.totalProfit > 0;
-}
-
-//+------------------------------------------------------------------+
-//| Get Setup Win Rate (TP vs SL)                                    |
-//+------------------------------------------------------------------+
-double GetSetupWinRate(EngulfingSetup &setup) {
-   int totalClosed = setup.tpHits + setup.slHits;
-   if(totalClosed == 0) return 0;
-   
-   return ((double)setup.tpHits / totalClosed) * 100.0;
-}
-
-//+------------------------------------------------------------------+
-//| Check if Setup is Complete (no pending/open trades)              |
-//+------------------------------------------------------------------+
-bool IsSetupComplete(EngulfingSetup &setup) {
-   int pendingCount = CountPendingOrders(setup.setupID);
-   int executedCount = CountExecutedPositions(setup.setupID, setup.magicNumber);
-   
-   return (pendingCount == 0 && executedCount == 0);
-}
-
-//+------------------------------------------------------------------+
-//| Get Setup State Description                                      |
-//+------------------------------------------------------------------+
-string GetSetupStateDescription(EngulfingSetup &setup) {
-   string desc = GetStateName(setup.state);
-   
-   if(setup.state == SETUP_TAPPED) {
-      desc += " (" + GetTradeStatusName(setup.tradeStatus) + ")";
-      if(setup.isComplete) {
-         desc += " [COMPLETE]";
-      }
-   }
-   
-   return desc;
-}
-
-//+------------------------------------------------------------------+
-//| Calculate Setup Statistics                                       |
-//+------------------------------------------------------------------+
-void CalculateSetupStatistics(EngulfingSetup &setup) {
-   // Win rate
-   if(setup.tpHits + setup.slHits > 0) {
-      setup.winRate = ((double)setup.tpHits / (setup.tpHits + setup.slHits)) * 100.0;
-   }
-   
-   // Profit factor
-   if(setup.grossLoss != 0) {
-      setup.profitFactor = MathAbs(setup.grossProfit / setup.grossLoss);
-   }
-   
-   // Average win
-   if(setup.tpHits > 0) {
-      setup.averageWin = setup.grossProfit / setup.tpHits;
-   }
-   
-   // Average loss
-   if(setup.slHits > 0) {
-      setup.averageLoss = setup.grossLoss / setup.slHits;
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Count Setups by State                                            |
-//+------------------------------------------------------------------+
-void CountSetupsByState(int &untappedCount, int &tappedCount, int &completeCount) {
-   untappedCount = 0;
-   tappedCount = 0;
-   completeCount = 0;
+   int recoveredCount = 0;
+   int checkedCount = 0;
    
    for(int i = 0; i < ArraySize(g_allSetups); i++) {
-      switch(g_allSetups[i].state) {
-         case SETUP_UNTAPPED:
-            untappedCount++;
-            break;
-            
-         case SETUP_TAPPED:
-            tappedCount++;
-            if(g_allSetups[i].isComplete) {
-               completeCount++;
-            }
-            break;
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Count Setups by Trade Status                                     |
-//+------------------------------------------------------------------+
-void CountSetupsByTradeStatus(int &missedCount, int &tradedCount) {
-   missedCount = 0;
-   tradedCount = 0;
-   
-   for(int i = 0; i < ArraySize(g_allSetups); i++) {
-      if(g_allSetups[i].state == SETUP_TAPPED) {
-         if(g_allSetups[i].tradeStatus == TRADE_STATUS_MISSED) {
-            missedCount++;
-         } else if(g_allSetups[i].tradeStatus == TRADE_STATUS_TRADED) {
-            tradedCount++;
-         }
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Get Total Profit from All Setups                                 |
-//+------------------------------------------------------------------+
-double GetTotalProfit() {
-   double totalProfit = 0;
-   
-   for(int i = 0; i < ArraySize(g_allSetups); i++) {
-      totalProfit += g_allSetups[i].totalProfit;
-   }
-   
-   return totalProfit;
-}
-
-//+------------------------------------------------------------------+
-//| Get Total Orders Statistics                                      |
-//+------------------------------------------------------------------+
-void GetTotalOrderStats(int &totalPlaced, int &totalFilled, int &totalTP, int &totalSL) {
-   totalPlaced = 0;
-   totalFilled = 0;
-   totalTP = 0;
-   totalSL = 0;
-   
-   for(int i = 0; i < ArraySize(g_allSetups); i++) {
-      if(g_allSetups[i].tradeStatus == TRADE_STATUS_TRADED) {
-         totalPlaced += g_allSetups[i].ordersPlaced;
-         totalFilled += g_allSetups[i].ordersFilled;
-         totalTP += g_allSetups[i].tpHits;
-         totalSL += g_allSetups[i].slHits;
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Find Setup by ID                                                 |
-//+------------------------------------------------------------------+
-int FindSetupByID(string setupID) {
-   for(int i = 0; i < ArraySize(g_allSetups); i++) {
-      if(g_allSetups[i].setupID == setupID) {
-         return i;
-      }
-   }
-   return -1;
-}
-
-//+------------------------------------------------------------------+
-//| Check if Setup Index is Valid                                    |
-//+------------------------------------------------------------------+
-bool IsValidSetupIndex(int index) {
-   return (index >= 0 && index < ArraySize(g_allSetups));
-}
-
-//+------------------------------------------------------------------+
-//| Get Most Recent Setup                                            |
-//+------------------------------------------------------------------+
-int GetMostRecentSetupIndex() {
-   int count = ArraySize(g_allSetups);
-   if(count == 0) return -1;
-   
-   datetime latestTime = 0;
-   int latestIndex = -1;
-   
-   for(int i = 0; i < count; i++) {
-      if(g_allSetups[i].createdTime > latestTime) {
-         latestTime = g_allSetups[i].createdTime;
-         latestIndex = i;
+      // Only check MISSED setups
+      if(g_allSetups[i].tradeStatus != TRADE_STATUS_MISSED) continue;
+      
+      checkedCount++;
+      
+      // Check if there are actually trades in MT5
+      bool hasTradesInMT5 = CheckMT5HistoryForSetup(g_allSetups[i]);
+      
+      if(hasTradesInMT5) {
+         Print("🔧 RECOVERING: ", g_allSetups[i].setupID);
+         
+         // Recover tickets from MT5
+         RecoverTicketsFromMT5History(g_allSetups[i]);
+         
+         // Update status to TRADED
+         g_allSetups[i].tradeStatus = TRADE_STATUS_TRADED;
+         g_allSetups[i].wasTraded = true;
+         g_allSetups[i].wasMissed = false;
+         
+         // Recalculate financials
+         UpdateOrderStatus(g_allSetups[i]);
+         CalculateSetupProfit(g_allSetups[i]);
+         
+         // Update visual lines
+         RedrawTappedLines(g_allSetups[i]);
+         
+         recoveredCount++;
+         
+         Print("   ✅ Recovered: ", ArraySize(g_allSetups[i].orderTickets), " tickets");
+         Print("   📊 Filled: ", g_allSetups[i].ordersFilled, " | P/L: $", 
+               DoubleToString(g_allSetups[i].totalProfit, 2));
       }
    }
    
-   return latestIndex;
-}
-
-//+------------------------------------------------------------------+
-//| Get Active Untapped Setups Count                                 |
-//+------------------------------------------------------------------+
-int GetActiveUntappedCount() {
-   int count = 0;
+   Print("\n╔════════════════════════════════════════════════════════════════╗");
+   Print("║  🔧 RECOVERY COMPLETE                                         ║");
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║  Checked: ", checkedCount, " MISSED setups");
+   Print("║  Recovered: ", recoveredCount, " setups from MT5 history");
+   Print("╚════════════════════════════════════════════════════════════════╝\n");
    
-   for(int i = 0; i < ArraySize(g_allSetups); i++) {
-      if(g_allSetups[i].state == SETUP_UNTAPPED) {
-         count++;
-      }
+   if(recoveredCount > 0) {
+      // Update global counters
+      g_totalSetupsMissed -= recoveredCount;
+      g_totalSetupsTraded += recoveredCount;
+      
+      // Save corrected data
+      Print("💾 Saving corrected data to JSON...");
+      SaveSetupsToFile();
+      Print("✅ JSON file updated!\n");
    }
-   
-   return count;
-}
-
-//+------------------------------------------------------------------+
-//| Get Active Traded Setups Count (tapped but not complete)         |
-//+------------------------------------------------------------------+
-int GetActiveTradedCount() {
-   int count = 0;
-   
-   for(int i = 0; i < ArraySize(g_allSetups); i++) {
-      if(g_allSetups[i].state == SETUP_TAPPED && 
-         g_allSetups[i].tradeStatus == TRADE_STATUS_TRADED &&
-         !g_allSetups[i].isComplete) {
-         count++;
-      }
-   }
-   
-   return count;
 }
 
 //+------------------------------------------------------------------+

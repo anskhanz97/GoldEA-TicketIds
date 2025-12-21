@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                                            VisualManager.mqh      |
 //|                    Gold Engulfing EA - Visual Line Management     |
-//|                    v2.1 - 2-STATE SYSTEM                          |
+//|                    v2.1 - 2-STATE SYSTEM Compatible               |
 //+------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
@@ -74,7 +74,7 @@ void RedrawTappedLines(EngulfingSetup &setup) {
 //| Update UNTAPPED Lines to Current Time (Extend Yellow Lines)      |
 //+------------------------------------------------------------------+
 void UpdateUntappedLines(EngulfingSetup &setup, datetime currentTime) {
-   // Only update if lines exist and  setup is still UNTAPPED
+   // Only update if setup is still UNTAPPED
    if(setup.state != SETUP_UNTAPPED) return;
    
    if(ObjectFind(0, setup.lineHighName) >= 0) {

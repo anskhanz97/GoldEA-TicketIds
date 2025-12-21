@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
-//|                                          StorageSystem.mqh        |
-//|                    Gold Engulfing EA - File Storage System v2.1   |
-//|                    2-State System with Full Tracking             |
+//|                                         StorageSystem.mqh         |
+//|                 Gold Engulfing EA - File Storage System v3.0      |
+//|                 ✅ TICKET-BASED PERSISTENT STORAGE                |
 //+------------------------------------------------------------------+
 
 // Global variable to track last saved state (for backup detection)
@@ -13,29 +13,27 @@ string g_lastSavedJSON = "";
 bool InitializeStorage() {
    // Check if files are accessible
    if(!FileIsExist(FILE_SETUPS)) {
-    //  Print("📁 Setup file doesn't exist, will be created on first save");
+      // Print("📁 Setup file doesn't exist, will be created on first save");
    } else {
-    //  Print("📁 Setup file found: ", FILE_SETUPS);
+      // Print("📁 Setup file found: ", FILE_SETUPS);
    }
    
-   //WriteLog("Storage system v2.1 initialized");
+   //WriteLog("Storage system v3.0 initialized - Ticket tracking enabled");
    return true;
 }
 
 //+------------------------------------------------------------------+
-//| Save All Setups to JSON File (v2.1)                              |
+//| Save All Setups to JSON File (v3.0 with Tickets)                 |
 //+------------------------------------------------------------------+
 bool SaveSetupsToFile() {
    int totalSetups = ArraySize(g_allSetups);
-   
    if(totalSetups == 0) {
-     // DebugPrint("No setups to save");
+      // DebugPrint("No setups to save");
       return true;
    }
    
    // Build JSON string from g_allSetups
    string json = BuildAllSetupsJSON();
-   
    if(json == "") {
       Print("ERROR: Failed to build JSON string");
       WriteLog("ERROR: Failed to build JSON for save");
@@ -54,11 +52,11 @@ bool SaveSetupsToFile() {
       AppendToBackup(json);
       g_lastSavedJSON = json;
       
-     // Print("💾 Saved ", totalSetups, " setups to file (backup created)");
+      // Print("💾 Saved ", totalSetups, " setups to file (backup created)");
       WriteLog(StringFormat("Saved %d setups to file with backup", totalSetups));
    } else {
-   //   Print("💾 Saved ", totalSetups, " setups to file (no backup - unchanged)");
-   //   WriteLog(StringFormat("Saved %d setups to file (no backup)", totalSetups));
+      // Print("💾 Saved ", totalSetups, " setups to file (no backup - unchanged)");
+      // WriteLog(StringFormat("Saved %d setups to file (no backup)", totalSetups));
    }
    
    return true;
@@ -69,17 +67,16 @@ bool SaveSetupsToFile() {
 //+------------------------------------------------------------------+
 bool LoadSetupsFromFile() {
    if(!FileIsExist(FILE_SETUPS)) {
-    //  Print("📂 No existing setup file found - starting fresh");
+      // Print("📂 No existing setup file found - starting fresh");
       WriteLog("No setup file found - fresh start");
       return true;
    }
    
    // Read file
    string json = ReadJSONFromFile(FILE_SETUPS);
-   
    if(json == "") {
       Print("⚠️ Setup file is empty or couldn't be read");
-     // WriteLog("WARNING: Setup file empty or unreadable");
+      // WriteLog("WARNING: Setup file empty or unreadable");
       return true;
    }
    
@@ -94,20 +91,20 @@ bool LoadSetupsFromFile() {
    g_lastSavedJSON = json;
    
    int totalSetups = ArraySize(g_allSetups);
-  // Print("📂 Loaded ", totalSetups, " setups from file");
+   // Print("📂 Loaded ", totalSetups, " setups from file");
    WriteLog(StringFormat("Loaded %d setups from file", totalSetups));
    
    return true;
 }
 
 //+------------------------------------------------------------------+
-//| Build JSON String from g_allSetups Array (v2.1)                  |
+//| ✅ Build JSON String with Ticket Arrays (v3.0)                   |
 //+------------------------------------------------------------------+
 string BuildAllSetupsJSON() {
    int totalSetups = ArraySize(g_allSetups);
    
    string json = "{\n";
-   json += "  \"version\": \"2.1\",\n";
+   json += "  \"version\": \"3.0\",\n";
    json += "  \"timestamp\": \"" + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "\",\n";
    json += "  \"setupCount\": " + IntegerToString(totalSetups) + ",\n";
    json += "  \"systemStats\": {\n";
@@ -123,6 +120,28 @@ string BuildAllSetupsJSON() {
       // Identity
       json += "      \"setupID\": \"" + g_allSetups[i].setupID + "\",\n";
       json += "      \"magicNumber\": " + IntegerToString(g_allSetups[i].magicNumber) + ",\n";
+      
+      // ✅ NEW: Store order ticket arrays
+      json += "      \"orderTickets\": [";
+      for(int j = 0; j < ArraySize(g_allSetups[i].orderTickets); j++) {
+         json += IntegerToString(g_allSetups[i].orderTickets[j]);
+         if(j < ArraySize(g_allSetups[i].orderTickets) - 1) json += ",";
+      }
+      json += "],\n";
+      
+      json += "      \"filledTickets\": [";
+      for(int j = 0; j < ArraySize(g_allSetups[i].filledTickets); j++) {
+         json += IntegerToString(g_allSetups[i].filledTickets[j]);
+         if(j < ArraySize(g_allSetups[i].filledTickets) - 1) json += ",";
+      }
+      json += "],\n";
+      
+      json += "      \"cancelledTickets\": [";
+      for(int j = 0; j < ArraySize(g_allSetups[i].cancelledTickets); j++) {
+         json += IntegerToString(g_allSetups[i].cancelledTickets[j]);
+         if(j < ArraySize(g_allSetups[i].cancelledTickets) - 1) json += ",";
+      }
+      json += "],\n";
       
       // Time tracking
       json += "      \"engulfingTime\": " + IntegerToString((long)g_allSetups[i].engulfingTime) + ",\n";
@@ -200,7 +219,7 @@ string BuildAllSetupsJSON() {
 }
 
 //+------------------------------------------------------------------+
-//| Parse JSON String and Populate g_allSetups Array (v2.1)          |
+//| ✅ Parse JSON String with Ticket Arrays (v3.0)                   |
 //+------------------------------------------------------------------+
 bool ParseAllSetupsJSON(string json) {
    // Clear existing array
@@ -208,7 +227,7 @@ bool ParseAllSetupsJSON(string json) {
    
    // Extract version
    string version = ExtractStringValue(json, "version");
-  // Print("Loading setup file version: ", version);
+   // Print("Loading setup file version: ", version);
    
    // Extract system stats
    int systemStatsPos = StringFind(json, "\"systemStats\"");
@@ -234,6 +253,7 @@ bool ParseAllSetupsJSON(string json) {
    string countStr = StringSubstr(json, countStart, countEnd - countStart);
    StringTrimLeft(countStr);
    StringTrimRight(countStr);
+   
    int savedSetupCount = (int)StringToInteger(countStr);
    
    if(savedSetupCount == 0) {
@@ -250,6 +270,7 @@ bool ParseAllSetupsJSON(string json) {
    
    // Parse each setup
    int searchPos = setupsArrayStart;
+   
    for(int i = 0; i < savedSetupCount; i++) {
       EngulfingSetup setup;
       
@@ -267,6 +288,16 @@ bool ParseAllSetupsJSON(string json) {
       // Identity
       setup.setupID = ExtractStringValue(setupJSON, "setupID");
       setup.magicNumber = (int)ExtractIntValue(setupJSON, "magicNumber");
+      
+      // ✅ NEW: Parse ticket arrays
+      string orderTicketsStr = ExtractArrayValue(setupJSON, "orderTickets");
+      ParseUlongArray(orderTicketsStr, setup.orderTickets);
+      
+      string filledTicketsStr = ExtractArrayValue(setupJSON, "filledTickets");
+      ParseUlongArray(filledTicketsStr, setup.filledTickets);
+      
+      string cancelledTicketsStr = ExtractArrayValue(setupJSON, "cancelledTickets");
+      ParseUlongArray(cancelledTicketsStr, setup.cancelledTickets);
       
       // Time tracking
       setup.engulfingTime = (datetime)ExtractIntValue(setupJSON, "engulfingTime");
@@ -346,7 +377,49 @@ bool ParseAllSetupsJSON(string json) {
 }
 
 //+------------------------------------------------------------------+
-//| Extract String Value from JSON                                   |
+//| ✅ NEW: Extract Array Value from JSON                            |
+//+------------------------------------------------------------------+
+string ExtractArrayValue(string json, string key) {
+   string searchKey = "\"" + key + "\": [";
+   int keyPos = StringFind(json, searchKey);
+   if(keyPos < 0) return "[]";
+   
+   int valueStart = keyPos + StringLen(searchKey) - 1;  // Include the '['
+   int valueEnd = StringFind(json, "]", valueStart) + 1; // Include the ']'
+   
+   return StringSubstr(json, valueStart, valueEnd - valueStart);
+}
+
+//+------------------------------------------------------------------+
+//| ✅ NEW: Parse Ulong Array from JSON String                       |
+//+------------------------------------------------------------------+
+void ParseUlongArray(string arrayStr, ulong &arr[]) {
+   ArrayResize(arr, 0);
+   
+   // Remove brackets
+   StringReplace(arrayStr, "[", "");
+   StringReplace(arrayStr, "]", "");
+   StringTrimLeft(arrayStr);
+   StringTrimRight(arrayStr);
+   
+   if(arrayStr == "") return;
+   
+   // Split by comma
+   string parts[];
+   int count = StringSplit(arrayStr, ',', parts);
+   
+   if(count <= 0) return;
+   
+   ArrayResize(arr, count);
+   for(int i = 0; i < count; i++) {
+      StringTrimLeft(parts[i]);
+      StringTrimRight(parts[i]);
+      arr[i] = (ulong)StringToInteger(parts[i]);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Extract String Value from JSON                                    |
 //+------------------------------------------------------------------+
 string ExtractStringValue(string json, string key) {
    string searchKey = "\"" + key + "\":";
@@ -360,7 +433,7 @@ string ExtractStringValue(string json, string key) {
 }
 
 //+------------------------------------------------------------------+
-//| Extract Integer Value from JSON                                  |
+//| Extract Integer Value from JSON                                   |
 //+------------------------------------------------------------------+
 long ExtractIntValue(string json, string key) {
    string searchKey = "\"" + key + "\":";
@@ -379,7 +452,7 @@ long ExtractIntValue(string json, string key) {
 }
 
 //+------------------------------------------------------------------+
-//| Extract Double Value from JSON                                   |
+//| Extract Double Value from JSON                                    |
 //+------------------------------------------------------------------+
 double ExtractDoubleValue(string json, string key) {
    string searchKey = "\"" + key + "\":";
@@ -398,7 +471,7 @@ double ExtractDoubleValue(string json, string key) {
 }
 
 //+------------------------------------------------------------------+
-//| Extract Boolean Value from JSON                                  |
+//| Extract Boolean Value from JSON                                   |
 //+------------------------------------------------------------------+
 bool ExtractBoolValue(string json, string key) {
    string searchKey = "\"" + key + "\":";
@@ -412,11 +485,10 @@ bool ExtractBoolValue(string json, string key) {
 }
 
 //+------------------------------------------------------------------+
-//| Write JSON String to File                                        |
+//| Write JSON String to File                                         |
 //+------------------------------------------------------------------+
 bool WriteJSONToFile(string filename, string json) {
    int handle = FileOpen(filename, FILE_WRITE|FILE_TXT|FILE_ANSI);
-   
    if(handle == INVALID_HANDLE) {
       int error = GetLastError();
       Print("ERROR: Cannot open file for writing: ", filename, " | Error: ", error);
@@ -435,11 +507,10 @@ bool WriteJSONToFile(string filename, string json) {
 }
 
 //+------------------------------------------------------------------+
-//| Read JSON String from File                                       |
+//| Read JSON String from File                                        |
 //+------------------------------------------------------------------+
 string ReadJSONFromFile(string filename) {
    int handle = FileOpen(filename, FILE_READ|FILE_TXT|FILE_ANSI);
-   
    if(handle == INVALID_HANDLE) {
       int error = GetLastError();
       Print("ERROR: Cannot open file for reading: ", filename, " | Error: ", error);
@@ -460,8 +531,8 @@ string ReadJSONFromFile(string filename) {
 //+------------------------------------------------------------------+
 void AppendToBackup(string json) {
    string backupFile = "GoldEngulfing_backups.json";
-   int handle = FileOpen(backupFile, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
    
+   int handle = FileOpen(backupFile, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(handle == INVALID_HANDLE) {
       // File doesn't exist, create it
       handle = FileOpen(backupFile, FILE_WRITE|FILE_TXT|FILE_ANSI);
@@ -476,7 +547,7 @@ void AppendToBackup(string json) {
    
    // Write separator and timestamp
    string separator = "\n========================================\n";
-   separator += "Backup v2.1: " + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "\n";
+   separator += "Backup v3.0: " + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "\n";
    separator += "========================================\n";
    
    FileWriteString(handle, separator);
@@ -489,11 +560,10 @@ void AppendToBackup(string json) {
 }
 
 //+------------------------------------------------------------------+
-//| Write Log Entry                                                  |
+//| Write Log Entry                                                   |
 //+------------------------------------------------------------------+
 void WriteLog(string message) {
    int handle = FileOpen(FILE_LOGS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
-   
    if(handle == INVALID_HANDLE) {
       // Create new log file
       handle = FileOpen(FILE_LOGS, FILE_WRITE|FILE_TXT|FILE_ANSI);

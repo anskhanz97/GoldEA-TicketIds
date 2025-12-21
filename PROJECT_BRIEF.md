@@ -1,4 +1,4 @@
-Gold Engulfing EA v2.1 - Project Brief
+Gold Engulfing EA v2.4 - Project Brief
 
 Strategy Overview
 Asset: XAUUSD only
@@ -23,36 +23,91 @@ First TP Hit → Cancel all remaining pending orders
 All Orders Handled → Mark COMPLETE
 Save State → Persistent JSON storage on every change
 
-2-State System (v2.1)
-UNTAPPED (yellow lines, waiting)
+
+
+CORE LOGIC FLOW v4.0
+EA Start (OnInit)
     ↓
-    ↓ [Price enters range]
+Load saved setups WITH TICKETS from JSON
     ↓
-TAPPED (red lines, stopped at tap time)
-    ├─→ MISSED (EA was offline when tapped)
-    └─→ TRADED (orders were placed & managed)
-         ├─→ First TP Hit → Cancel remaining orders
-         └─→ COMPLETE (all orders closed/cancelled)
+✅ NEW: ValidateActiveSetupsFromTickets()
+    ├── Check MT5 History FIRST for each setup
+    ├── Recover tickets from MT5 if missing
+    ├── Update states based on ACTUAL trades
+    ↓
+Scan 14 days historical data
+    ↓
+For each UNTAPPED pattern found:
+    ├── Create setup
+    ├── Draw YELLOW lines
+    ├── ✅ Place orders immediately (3-3-4 distribution)
+    ├── ✅ Store ACTUAL TICKETS in setup.orderTickets[]
+    ↓
+Save ALL setups WITH TICKETS to JSON
+    ↓
+OnTick() (New H1 Bar)
+    ├── Detect new engulfing patterns
+    ├── Check if price taps UNTAPPED setups
+    ├── Update TAPPED setups using STORED TICKETS
+    ├── Check for first TP hit
+    ├── Save state WITH TICKETS
+    ↓
+OnDeinit()
+    ├── Save final state WITH TICKETS
+    ├── Clean up chart objects
+
+
+
+STATE TRANSITIONS (Simplified 2-State System)
+UNTAPPED (🟡 Yellow lines, extending)
+    │
+    │ [Price enters range OR orders fill]
+    ↓
+TAPPED (🔴 Red lines, stopped at tap time)
+    ├──→ MISSED (No tickets, EA was offline)
+    │       ├── BUT can be RECOVERED from MT5 history
+    │       └── Mark as MISSED in statistics
+    │
+    └──→ TRADED (Has stored tickets)
+            ├──→ First TP Hit → Cancel remaining orders
+            ├──→ Monitor using stored tickets
+            └──→ COMPLETE (All orders handled)
+
+
 
 File Structure
-GoldH1EngulfingScalper.mq5      # Main orchestrator (OnInit, OnTick, OnDeinit)
-├── Include/
-    ├── Config.mqh               # Inputs, constants, EngulfingSetup struct
-    ├── Utils.mqh                # ID generation, pip value, price checks
-    ├── EngulfingDetector.mqh    # Pattern detection & historical scanning
-    ├── VisualManager.mqh        # Line drawing, updating, cleanup
-    ├── OrderManager.mqh         # Order placement, cancellation, monitoring
-    ├── SetupManager.mqh         # State transitions, tap detection
-    ├── SetupHelpers.mqh         # Setup validation, counting, statistics
-    ├── StorageSystem.mqh        # JSON save/load with full tracking
-    └── TableLogger.mqh          # Compact summaries & detailed tables
+MQL5/
+├── Experts/
+│   └── GoldEngulfing_Main.mq5          # Main orchestrator
+│
+└── Include/
+    ├── Config.mqh                        # Inputs, constants, EngulfingSetup struct
+    ├── Utils.mqh                         # ID generation, pip value, price checks
+    ├── EngulfingDetector.mqh             # Pattern detection & historical scanning
+    ├── VisualManager.mqh                 # Line drawing, updating, cleanup
+    ├── OrderManager.mqh                  # ✅ DIAGNOSTIC VERSION - Tracks ticket flow
+    ├── SetupManager.mqh                  # ✅ TICKET-BASED VALIDATION SYSTEM
+    ├── SetupHelpers.mqh                  # ✅ COMPLETE IMPLEMENTATION with MT5 recovery
+    ├── StorageSystem.mqh                 # ✅ TICKET-BASED PERSISTENT STORAGE
+    └── TableLogger.mqh                   # Simplified logger for 2-STATE system
+
+Files/ (auto-created by EA)
+├── GoldEngulfing_setups.json            # ✅ Stores ACTUAL TICKETS (ulong arrays)
+├── GoldEngulfing_backups.json           # Append-only backup history
+└── GoldEngulfing_logs.json              # Event log
+
+
+
 Key Data Structure (Enhanced v2.1)
-
-
 struct EngulfingSetup {
    // === IDENTITY ===
    string setupID;                    // "Engulf_18122025-1000-B"
-   int magicNumber;                   // Generated hash from setupID
+   int magicNumber;                   // Generated hash from setupID (FIXED for uniqueness)
+   
+   // === ✅ TICKET STORAGE (NEW v4.0) ===
+   ulong orderTickets[];              // ACTUAL ORDER TICKETS placed
+   ulong filledTickets[];             // TICKETS that filled
+   ulong cancelledTickets[];          // TICKETS that cancelled
    
    // === TIME TRACKING ===
    datetime engulfingTime;            // Engulfing candle time
@@ -117,70 +172,85 @@ struct EngulfingSetup {
    bool wasMissed;                    // EA offline when tapped?
    bool hadFirstTP;                   // First TP ever hit?
 }
-```
+
 
 ## Critical Functions
 
-### Pattern Detection
-- `ScanHistoricalData()` → Scan 14 days, create setups, check if tapped, place orders
-- `ScanForNewEngulfingPattern()` → Real-time detection on new H1 bar
-- `ProcessEngulfingPattern()` → Create setup, check tapped, place orders if valid
-- `ScanAllCandlesWithLogging()` → Complete candle analysis with detailed table
+CRITICAL FUNCTIONS v4.0
+Pattern Detection (EngulfingDetector.mqh)
+ScanHistoricalData() → Scan 14 days, create setups, place orders for untapped
 
-### State Management
-- `CheckUntappedSetups()` → Monitor untapped setups for price entry
-- `MarkSetupAsTapped()` → Transition UNTAPPED→TAPPED, determine MISSED vs TRADED
-- `CheckTappedSetups()` → Monitor traded setups for TP hits & completion
-- `MarkSetupAsComplete()` → All orders closed/cancelled
-- `RevalidateUntappedSetups()` → Check if untapped setups were tapped while EA offline
+ScanForNewEngulfingPattern() → Real-time detection on new H1 bar
 
-### Order Management
-- `PlaceOrders(setup)` → 3 top, 3 mid, 4 bottom zone distribution
-- `PlaceSingleOrder()` → Place individual limit order with SL/TP
-- `CancelPendingOrders(setupID)` → When first TP hits or manual close
-- `UpdateOrderStatus(setup)` → Count pending, open, filled orders
-- `CheckFirstTPHit(setup)` → Detect first TP from history
-- `CalculateSetupProfit(setup)` → Calculate all financial metrics
+ProcessEngulfingPattern() → Create setup, check tapped, place orders if valid
 
-### Visual Management
-- `DrawRangeLines(setup)` → Yellow dotted lines for UNTAPPED
-- `RedrawTappedLines(setup)` → Red dotted lines stopped at tap time
-- `UpdateAllUntappedLines()` → Extend yellow lines to current time
-- `RestoreVisualLines()` → Redraw all lines on EA restart
-- `CleanupOldLines()` → Remove lines older than 14 days
-- `DeleteAllEALines()` → Complete cleanup on EA removal
+Order Management (OrderManager.mqh)
+PlaceOrders(setup) → STORES ACTUAL TICKETS in setup.orderTickets[]
 
-### Persistence
-- `SaveSetupsToFile()` → JSON save with backup (only if changed)
-- `LoadSetupsFromFile()` → Restore all setups from JSON
-- `BuildAllSetupsJSON()` → Serialize complete state to JSON
-- `ParseAllSetupsJSON()` → Deserialize JSON to g_allSetups array
+PlaceSingleOrder() → Place limit order, IMMEDIATELY STORE TICKET
 
-### Helpers
-- `CanPlaceOrdersForSetup()` → Validate: not placed, not tapped, within 14 days
-- `CheckIfRangeTapped()` → Scan price history for range entry
-- `GetSetupAge()` → Days since creation
-- `ValidateSetupIntegrity()` → Data consistency checks
+UpdateOrderStatus(setup) → Uses STORED TICKETS to check status
+
+CalculateSetupProfit(setup) → Calculates P/L using FILLED TICKETS
+
+Setup Management (SetupManager.mqh)
+ValidateActiveSetupsFromTickets() → VALIDATES AGAINST MT5 HISTORY
+
+MarkSetupAsTapped() → Determines MISSED vs TRADED based on TICKET PRESENCE
+
+CheckTappedSetups() → Monitors using STORED TICKETS
+
+Setup Recovery (SetupHelpers.mqh)
+CheckMT5HistoryForSetup() → Checks MT5 trade history for setup trades
+
+RecoverTicketsFromMT5History() → Recovers tickets from MT5 when missing
+
+ManualRecoveryFromMT5() → Manual command to fix missed setups
+
+Storage System (StorageSystem.mqh)
+SaveSetupsToFile() → SAVES TICKET ARRAYS to JSON
+
+LoadSetupsFromFile() → LOADS TICKET ARRAYS from JSON
+
+ParseUlongArray() → Special parser for ticket arrays
+
+Visual Management (VisualManager.mqh)
+DrawRangeLines() → Yellow dotted lines for UNTAPPED (extending)
+
+RedrawTappedLines() → Red dotted lines stopped at tap time
+
+RestoreVisualLines() → Redraw lines based on stored state
 
 ## Persistence (JSON Files)
-- `GoldEngulfing_setups.json` → Current state (full tracking v2.1)
+- `GoldEngulfing_setups.json` → Current state (full tracking v2.4)
 - `GoldEngulfing_backups.json` → Append-only history (only when data changes)
 - `GoldEngulfing_logs.json` → Event log (state transitions, errors)
--> Location of Json Files: \MQL5\Files
 
-## Key Design Decisions (v2.1)
+-File Locations
+Primary: MQL5/Files/GoldEngulfing_setups.json (Current state WITH tickets)
+Backup: MQL5/Files/GoldEngulfing_backups.json (Append-only backup)
+Logs: MQL5/Files/GoldEngulfing_logs.json (Event log)
 
-1. **2-State System** → Simplified UNTAPPED→TAPPED (no ORDERED state)
-2. **Trade Status Tracking** → MISSED vs TRADED within TAPPED state
-3. **Time-based Deterministic IDs** → Bulletproof duplicate prevention
-4. **First TP = Cancel Rest** → Aggressive risk management
-5. **Manual Close Detection** → Also cancels remaining orders
-6. **Re-validation on Restart** → Check if untapped setups were tapped while EA offline
-7. **Complete Financial Tracking** → TP/SL breakdown, win rate, profit factor
-8. **Visual Feedback** → Yellow (untapped, extending) → Red (tapped, stopped at tap time)
-9. **Historical Scanning** → Full 14 days on EA start, places orders immediately
-10. **State Persistence** → Survives restarts with complete tracking
-11. **Backup Only on Change** → Efficient backup system (avoids duplicates)
+
+## PERSISTENCE SYSTEM v4.0
+JSON Structure with Tickets
+{
+  "version": "3.0",
+  "setupCount": 12,
+  "setups": [
+    {
+      "setupID": "Engulf_18122025-1000-B",
+      "magicNumber": 123456,
+      "orderTickets": [1001001, 1001002, 1001003, ...],  // ACTUAL TICKETS
+      "filledTickets": [1001001, 1001003],
+      "cancelledTickets": [1001002],
+      "state": 1,
+      "tradeStatus": 1,
+      // ... all other fields
+    }
+  ]
+}
+
 
 ## Detailed Table Logging
 When `InpEnableTableLogs = true`, displays:
@@ -194,13 +264,16 @@ All candles scanned (336 bars = 14 days)
 Engulfing patterns with Setup ID and state
 Rejection reasons (body too small, same direction, not engulfing)
 
-##Global Tracking
-
-int g_totalSetupsCreated = 0;    // All-time setup count
-int g_totalSetupsTraded = 0;     // Setups with orders placed
-int g_totalSetupsMissed = 0;     // Setups tapped while EA offline
-
-##File Locations
+## File Locations
 -> Location of Placement of ALL Component Files: 
 GoldEngulfing_Main ---> \MQL5\Experts
 Rest of Files --------> \MQL5\Experts\Include
+
+## Global Variables:
+// Global tracking
+EngulfingSetup g_allSetups[];          // ALL setups with tickets
+int g_totalSetupsCreated = 0;          // All-time count
+int g_totalSetupsTraded = 0;           // Setups with REAL trades
+int g_totalSetupsMissed = 0;           // Setups tapped while offline
+datetime g_lastBarTime = 0;            // New bar detection
+string g_lastSavedJSON = "";           // Backup optimization

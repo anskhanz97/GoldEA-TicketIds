@@ -1,9 +1,8 @@
 //+------------------------------------------------------------------+
 //| EngulfingDetector.mqh -                                         |
+//| Fixed for v2.1 - Orders now placed for ALL untapped patterns    |
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-//| Scan Historical Data (14 Days) - INCLUDES LAST 24 HOURS         |
-//+---------------------------------------------------------
+
 void ScanHistoricalData() {
     int barsIn14Days = 336; // 14 days * 24 hours
     int totalBars = MathMin(Bars(_Symbol, PERIOD_H1), barsIn14Days);
@@ -427,17 +426,17 @@ void ScanAllCandlesWithLogging(int barsToScan, string scanName) {
         }
         
         if(PatternAlreadyExists(currentCandle.candleTime, previousCandle.candleTime)) {
-         // Find the setup and show its status
-         string setupID = GenerateSetupID(currentCandle.candleTime, previousCandle.candleTime, engulfing_is_bullish);
-         int setupIndex = FindSetupByID(setupID);
-         
-         if(setupIndex >= 0) {
-            string status = (g_allSetups[setupIndex].state == SETUP_UNTAPPED) ? "UNTAPPED" : "TAPPED";
-            g_allCandles[i].reason = status + " [" + setupID + "]";
-         } else {
-            g_allCandles[i].reason = "ENGULFING [" + setupID + "]";
-         }
-         continue;
+            // Find the setup and show its status
+    string setupID = GenerateSetupID(currentCandle.candleTime, previousCandle.candleTime, engulfing_is_bullish);
+    int setupIndex = FindSetupByID(setupID);
+    
+    if(setupIndex >= 0) {
+        string status = (g_allSetups[setupIndex].state == SETUP_UNTAPPED) ? "UNTAPPED" : "TAPPED";
+        g_allCandles[i].reason = status + " [" + setupID + "]";
+    } else {
+        g_allCandles[i].reason = "ENGULFING [" + setupID + "]";
+    }
+    continue;
         }
         
         string setupID = GenerateSetupID(currentCandle.candleTime, previousCandle.candleTime, engulfing_is_bullish);

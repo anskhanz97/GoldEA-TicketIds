@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                                            TableLogger.mqh        |
 //|                    Gold Engulfing EA - Simplified Logger v2.1     |
-//|                    2-STATE SYSTEM                                 |
+//|                    2-STATE SYSTEM Compatible                      |
 //+------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
@@ -120,32 +120,6 @@ void DisplayTradingStatistics() {
 }
 
 //+------------------------------------------------------------------+
-//| Display Recent Engulfing Patterns (Last 10)                       |
-//+------------------------------------------------------------------+
-void DisplayRecentEngulfing() {
-   int count = MathMin(10, ArraySize(g_allSetups));
-   if(count == 0) {
-      Print("No engulfing patterns found yet");
-      return;
-   }
-   
-  // Print("═══════════════════════════════════════════════════════════════════");
-   Print("                    RECENT ENGULFING PATTERNS                      ");
-  // Print("═══════════════════════════════════════════════════════════════════");
-   
-   for(int i = ArraySize(g_allSetups) - 1; i >= ArraySize(g_allSetups) - count && i >= 0; i--) {
-      string dir = g_allSetups[i].isBullish ? "🟢 BULLISH" : "🔴 BEARISH";
-      string state = GetStateName(g_allSetups[i].state);
-      string time = TimeToString(g_allSetups[i].engulfingTime, TIME_DATE|TIME_MINUTES);
-      
-      Print(StringFormat("%s | %s | %s | Profit: $%.2f",
-                        g_allSetups[i].setupID, dir, state, g_allSetups[i].totalProfit));
-   }
-   
-   Print("═══════════════════════════════════════════════════════════════════");
-}
-
-//+------------------------------------------------------------------+
 //| Display Candle Table (Simplified - Only Engulfing Patterns)      |
 //+------------------------------------------------------------------+
 void DisplayCandleTable() {
@@ -199,4 +173,42 @@ void TablePrint(string time, string bar, string datetime_str, string dir,
    Print(line);
 }
 
+
+void DisplayRecentEngulfing() {
+   int total = ArraySize(g_allSetups);
+   int count = MathMin(10, total); // Show last 10
+   if(count == 0) {
+      Print("No engulfing patterns found yet");
+      return;
+   }
+   
+   Print("\n==============================================================================================");
+   Print("                             RECENT SETUP DETAILS (LAST 10)                                   ");
+   Print("==============================================================================================");
+   Print("ID                       | DIR | STATUS   | TRADED? | FILLS | TP/SL | PROFIT    | AGE (Days)");
+   Print("----------------------------------------------------------------------------------------------");
+   
+   // Loop backwards from the newest setup
+   for(int i = total - 1; i >= total - count; i--) {
+      string dir = g_allSetups[i].isBullish ? "BULL" : "BEAR";
+      string state = GetStateName(g_allSetups[i].state);
+      string traded = (g_allSetups[i].tradeStatus == TRADE_STATUS_TRADED) ? "YES" : "NO";
+      
+      // Calculate age
+      int age = (int)((TimeCurrent() - g_allSetups[i].engulfingTime) / 86400);
+      
+      string detailLine = StringFormat("%-25s| %-4s| %-9s| %-8s| %-6d| %d/%d  | $%-9.2f| %d",
+                        g_allSetups[i].setupID, 
+                        dir, 
+                        state, 
+                        traded,
+                        g_allSetups[i].ordersFilled,
+                        g_allSetups[i].tpHits,
+                        g_allSetups[i].slHits,
+                        g_allSetups[i].totalProfit,
+                        age);
+      Print(detailLine);
+   }
+   Print("==============================================================================================\n");
+}
 //+------------------------------------------------------------------+

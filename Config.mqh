@@ -1,12 +1,12 @@
 //+------------------------------------------------------------------+
 //|                                                       Config.mqh  |
 //|                              Gold Engulfing EA - Configuration    |
-//|                              v2.1 - 2-STATE SYSTEM                |
+//|                              v3.0 - TICKET-BASED TRACKING         |
 //+------------------------------------------------------------------+
 
 //=== EA INFORMATION ===
 #define EA_NAME     "Gold Engulfing Scalper"
-#define EA_VERSION  "2.1"
+#define EA_VERSION  "3.0"
 
 //=== TRADING PARAMETERS ===
 input group "=== Basic Settings ==="
@@ -43,17 +43,21 @@ input int InpLookbackDays = 14;                    // Historical Scan Days
 
 //=== FILE PATHS ===
 #define FILE_SETUPS    "GoldEngulfing_setups.json"
-#define FILE_BACKUPS   "GoldEngulfing_backups.json"
 #define FILE_LOGS      "GoldEngulfing_logs.json"
 
 //=== CONSTANTS ===
 #define MAX_LOOKBACK_BARS  336    // 14 days * 24 hours
 
-//=== ENHANCED DATA STRUCTURE ===
+//=== ENHANCED DATA STRUCTURE v3.0 ===
 struct EngulfingSetup {
    // ===== IDENTITY =====
    string setupID;
    int magicNumber;
+   
+   // ===== ✅ NEW: TICKET TRACKING ARRAYS =====
+   ulong orderTickets[];         // All order tickets for this setup
+   ulong filledTickets[];        // Tickets that got filled (became positions)
+   ulong cancelledTickets[];     // Tickets that were cancelled
    
    // ===== TIME TRACKING =====
    datetime engulfingTime;
@@ -118,10 +122,16 @@ struct EngulfingSetup {
    bool wasMissed;
    bool hadFirstTP;
    
-   // Constructor
+   // ✅ Constructor - Initialize ticket arrays
    EngulfingSetup() {
       setupID = "";
       magicNumber = 0;
+      
+      // Initialize dynamic arrays
+      ArrayResize(orderTickets, 0);
+      ArrayResize(filledTickets, 0);
+      ArrayResize(cancelledTickets, 0);
+      
       engulfingTime = 0;
       engulfedTime = 0;
       tappedTime = 0;
@@ -168,15 +178,15 @@ struct EngulfingSetup {
 
 //=== Pattern Detection ===
 struct PatternData {
-    int barIndex;
-    datetime candleTime;
-    double open;
-    double high;
-    double low;
-    double close;
-    string status;
-    string reason;
-    string setupID;
+   int barIndex;
+   datetime candleTime;
+   double open;
+   double high;
+   double low;
+   double close;
+   string status;
+   string reason;
+   string setupID;
 };
 
 //=== GLOBAL ARRAYS ===

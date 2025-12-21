@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                                            OrderManager.mqh       |
-//|                    Gold Engulfing EA - Order Management v2.1      |
-//|                    Complete order placement and monitoring        |
+//|                    Gold Engulfing EA - Order Management v4.0      |
+//|                    ✅ DIAGNOSTIC VERSION - TRACKS TICKET FLOW     |
 //+------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
@@ -29,7 +29,6 @@ bool PlaceOrders(EngulfingSetup &setup) {
    Print("║  Direction: ", setup.isBullish ? "BULLISH 📈" : "BEARISH 📉");
    Print("║  Range High: ", DoubleToString(setup.rangeHigh, _Digits));
    Print("║  Range Low:  ", DoubleToString(setup.rangeLow, _Digits));
-   //Print("║  Range Size: ", DoubleToString(PointsToPips(rangeSize), 1), " pips");
    Print("╠════════════════════════════════════════════════════════════════╣");
    
    // Divide range into 3 zones
@@ -41,13 +40,18 @@ bool PlaceOrders(EngulfingSetup &setup) {
    double bottomZoneStart = midZoneEnd;
    double bottomZoneEnd = setup.rangeLow;
    
-  // Print("║  📍 TOP Zone:    ", DoubleToString(topZoneEnd, _Digits), " to ", DoubleToString(topZoneStart, _Digits));
-  // Print("║  📍 MID Zone:    ", DoubleToString(midZoneEnd, _Digits), " to ", DoubleToString(midZoneStart, _Digits));
-  // Print("║  📍 BOTTOM Zone: ", DoubleToString(bottomZoneEnd, _Digits), " to ", DoubleToString(bottomZoneStart, _Digits));
-  // Print("╠════════════════════════════════════════════════════════════════╣");
-   
    int totalOrders = 0;
    int successCount = 0;
+   
+   // ✅ DIAGNOSTIC: Show ticket array state BEFORE placing orders
+   Print("║  🔍 DIAGNOSTIC: Tickets BEFORE placing orders: ", ArraySize(setup.orderTickets));
+   
+   // ✅ Clear ticket arrays before placing new orders
+   ArrayResize(setup.orderTickets, 0);
+   ArrayResize(setup.filledTickets, 0);
+   ArrayResize(setup.cancelledTickets, 0);
+   
+   Print("║  🔍 DIAGNOSTIC: Tickets after clearing: ", ArraySize(setup.orderTickets));
    
    // Place TOP zone orders
    Print("║  Placing TOP zone orders (", InpTopZoneOrders, ")...");
@@ -79,8 +83,21 @@ bool PlaceOrders(EngulfingSetup &setup) {
       totalOrders++;
    }
    
+   // ✅ DIAGNOSTIC: Show ticket array state AFTER placing orders
    Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║  🔍 DIAGNOSTIC: Tickets AFTER placing orders: ", ArraySize(setup.orderTickets));
    Print("║  ✅ Orders Placed: ", successCount, "/", totalOrders);
+   
+   // ✅ DIAGNOSTIC: Print each stored ticket
+   if(ArraySize(setup.orderTickets) > 0) {
+      Print("║  📝 Stored Tickets:");
+      for(int i = 0; i < ArraySize(setup.orderTickets); i++) {
+         Print("║     #", setup.orderTickets[i]);
+      }
+   } else {
+      Print("║  ⚠️ WARNING: NO TICKETS STORED!");
+   }
+   
    Print("╚════════════════════════════════════════════════════════════════╝\n");
    
    // Update setup tracking
@@ -89,14 +106,29 @@ bool PlaceOrders(EngulfingSetup &setup) {
    setup.firstOrderTime = TimeCurrent();
    setup.lastActivityTime = TimeCurrent();
    
-   // Save to file
-   SaveSetupsToFile();
+   // ✅ DIAGNOSTIC: Check ticket array RIGHT BEFORE saving
+   Print("🔍 DIAGNOSTIC: Tickets in setup RIGHT BEFORE SaveSetupsToFile(): ", 
+         ArraySize(setup.orderTickets));
+   
+   // Save to file immediately (persistent storage)
+   Print("💾 Calling SaveSetupsToFile()...");
+   bool saveResult = SaveSetupsToFile();
+   
+   if(saveResult) {
+      Print("✅ SaveSetupsToFile() returned TRUE");
+   } else {
+      Print("❌ SaveSetupsToFile() returned FALSE - FILE WRITE FAILED!");
+   }
+   
+   // ✅ DIAGNOSTIC: Verify tickets are still there after save
+   Print("🔍 DIAGNOSTIC: Tickets in setup AFTER SaveSetupsToFile(): ", 
+         ArraySize(setup.orderTickets));
    
    return (successCount > 0);
 }
 
 //+------------------------------------------------------------------+
-//| Place Single Order at Specific Price                             |
+//| ✅ Place Single Order with Ticket Storage                        |
 //+------------------------------------------------------------------+
 bool PlaceSingleOrder(EngulfingSetup &setup, double entryPrice, bool isBullish) {
    // Normalize price
@@ -158,8 +190,27 @@ bool PlaceSingleOrder(EngulfingSetup &setup, double entryPrice, bool isBullish) 
    }
    
    if(result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_PLACED) {
-      DebugPrint(StringFormat("✅ Order placed: %s @ %.3f | SL:%.3f TP:%.3f | Ticket:%d", 
-                             EnumToString(orderType), entryPrice, sl, tp, result.order));
+      // ✅ CRITICAL: Store the ticket immediately
+      int beforeSize = ArraySize(setup.orderTickets);
+      int idx = ArraySize(setup.orderTickets);
+      ArrayResize(setup.orderTickets, idx + 1);
+      setup.orderTickets[idx] = result.order;
+      int afterSize = ArraySize(setup.orderTickets);
+      
+      // ✅ DIAGNOSTIC: Verify ticket was stored
+      Print("   ✅ Order #", result.order, " placed @ ", DoubleToString(entryPrice, 3));
+      Print("      🔍 Ticket array: ", beforeSize, " → ", afterSize, 
+            " (stored in index ", idx, ")");
+      
+      // ✅ VERIFY: Can we read it back?
+      if(afterSize > 0 && setup.orderTickets[idx] == result.order) {
+         Print("      ✅ VERIFIED: Ticket successfully stored and readable");
+      } else {
+         Print("      ❌ ERROR: Ticket storage verification FAILED!");
+         Print("         Expected: ", result.order);
+         Print("         Got: ", afterSize > 0 ? IntegerToString(setup.orderTickets[idx]) : "Array empty!");
+      }
+      
       return true;
    }
    
@@ -200,9 +251,74 @@ int CancelPendingOrders(string setupID) {
 }
 
 //+------------------------------------------------------------------+
-//| Update Order Status for Setup                                    |
+//| ✅ Update Order Status Using Stored Tickets                      |
 //+------------------------------------------------------------------+
 void UpdateOrderStatus(EngulfingSetup &setup) {
+   // ✅ DIAGNOSTIC: Show what we're working with
+   if(InpDebugMode) {
+      Print("🔍 UpdateOrderStatus for ", setup.setupID, 
+            " | Stored tickets: ", ArraySize(setup.orderTickets));
+   }
+   
+   // If no tickets stored, fall back to old method
+   if(ArraySize(setup.orderTickets) == 0) {
+      UpdateOrderStatusLegacy(setup);
+      return;
+   }
+   
+   // Reset counters
+   int pendingCount = 0;
+   int filledCount = 0;
+   int cancelledCount = 0;
+   
+   ArrayResize(setup.filledTickets, 0);
+   ArrayResize(setup.cancelledTickets, 0);
+   
+   // Check each stored ticket
+   for(int i = 0; i < ArraySize(setup.orderTickets); i++) {
+      ulong ticket = setup.orderTickets[i];
+      
+      // Check if still pending
+      if(OrderSelect(ticket)) {
+         pendingCount++;
+         continue;
+      }
+      
+      // Check in history
+      if(HistoryOrderSelect(ticket)) {
+         ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(ticket, ORDER_STATE);
+         
+         if(state == ORDER_STATE_FILLED) {
+            filledCount++;
+            int idx = ArraySize(setup.filledTickets);
+            ArrayResize(setup.filledTickets, idx + 1);
+            setup.filledTickets[idx] = ticket;
+            
+         } else if(state == ORDER_STATE_CANCELED) {
+            cancelledCount++;
+            int idx = ArraySize(setup.cancelledTickets);
+            ArrayResize(setup.cancelledTickets, idx + 1);
+            setup.cancelledTickets[idx] = ticket;
+         }
+      }
+   }
+   
+   // Update setup tracking
+   setup.ordersPlaced = ArraySize(setup.orderTickets);
+   setup.ordersFilled = filledCount;
+   setup.ordersCancelled = cancelledCount;
+   setup.positionsOpen = pendingCount;
+   
+   if(InpDebugMode) {
+      Print("📊 ", setup.setupID, ": ", pendingCount, " pending | ", 
+            filledCount, " filled | ", cancelledCount, " cancelled");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| ✅ Legacy: Old method for backwards compatibility                |
+//+------------------------------------------------------------------+
+void UpdateOrderStatusLegacy(EngulfingSetup &setup) {
    // Count current pending orders
    int pendingCount = CountPendingOrders(setup.setupID);
    
@@ -264,9 +380,99 @@ bool AreAllOrdersHandled(EngulfingSetup &setup) {
 }
 
 //+------------------------------------------------------------------+
-//| Calculate Setup Profit from History                              |
+//| ✅ Calculate Profit Using Stored Tickets                         |
 //+------------------------------------------------------------------+
 void CalculateSetupProfit(EngulfingSetup &setup) {
+   // If no filled tickets, fall back to old method
+   if(ArraySize(setup.filledTickets) == 0) {
+      CalculateSetupProfitLegacy(setup);
+      return;
+   }
+   
+   double totalProfit = 0;
+   double grossProfit = 0;
+   double grossLoss = 0;
+   double largestWin = 0;
+   double largestLoss = 0;
+   int tpCount = 0;
+   int slCount = 0;
+   int manualCount = 0;
+   
+   if(!HistorySelect(setup.createdTime, TimeCurrent())) return;
+   
+   // Only check OUR stored filled tickets
+   for(int i = 0; i < ArraySize(setup.filledTickets); i++) {
+      ulong orderTicket = setup.filledTickets[i];
+      
+      if(!HistoryOrderSelect(orderTicket)) continue;
+      
+      // Find the position that this order created
+      for(int j = 0; j < HistoryDealsTotal(); j++) {
+         ulong dealTicket = HistoryDealGetTicket(j);
+         
+         if(HistoryDealGetInteger(dealTicket, DEAL_ORDER) == orderTicket &&
+            HistoryDealGetInteger(dealTicket, DEAL_ENTRY) == DEAL_ENTRY_IN) {
+            
+            // Found entry deal - now find exit
+            ulong positionID = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+            
+            for(int k = 0; k < HistoryDealsTotal(); k++) {
+               ulong exitDeal = HistoryDealGetTicket(k);
+               
+               if(HistoryDealGetInteger(exitDeal, DEAL_POSITION_ID) == positionID &&
+                  HistoryDealGetInteger(exitDeal, DEAL_ENTRY) == DEAL_ENTRY_OUT) {
+                  
+                  double profit = HistoryDealGetDouble(exitDeal, DEAL_PROFIT);
+                  double commission = HistoryDealGetDouble(exitDeal, DEAL_COMMISSION);
+                  double swap = HistoryDealGetDouble(exitDeal, DEAL_SWAP);
+                  
+                  double netProfit = profit + commission + swap;
+                  totalProfit += netProfit;
+                  
+                  if(netProfit > 0) {
+                     grossProfit += netProfit;
+                     if(netProfit > largestWin) largestWin = netProfit;
+                  } else {
+                     grossLoss += netProfit;
+                     if(netProfit < largestLoss) largestLoss = netProfit;
+                  }
+                  
+                  // Detect TP/SL by profit amount
+                  if(netProfit > 6.0) {
+                     tpCount++;
+                  } else if(netProfit < -2.0) {
+                     slCount++;
+                  } else {
+                     manualCount++;
+                  }
+                  
+                  break;
+               }
+            }
+            break;
+         }
+      }
+   }
+   
+   // Update setup financials
+   setup.totalProfit = totalProfit;
+   setup.grossProfit = grossProfit;
+   setup.grossLoss = grossLoss;
+   setup.largestWin = largestWin;
+   setup.largestLoss = largestLoss;
+   setup.tpHits = tpCount;
+   setup.slHits = slCount;
+   setup.manualCloses = manualCount;
+   setup.positionsClosed = tpCount + slCount + manualCount;
+   
+   // Calculate metrics
+   CalculateSetupStatistics(setup);
+}
+
+//+------------------------------------------------------------------+
+//| ✅ Legacy: Old profit calculation                                |
+//+------------------------------------------------------------------+
+void CalculateSetupProfitLegacy(EngulfingSetup &setup) {
    double totalProfit = 0;
    double grossProfit = 0;
    double grossLoss = 0;
@@ -375,6 +581,7 @@ void PrintOrderSummary(EngulfingSetup &setup) {
    Print("\n╔════════════════════════════════════════════════════════════════╗");
    Print("║  ORDER SUMMARY: ", setup.setupID);
    Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║  Tickets Stored:    ", ArraySize(setup.orderTickets));
    Print("║  Orders Placed:     ", setup.ordersPlaced);
    Print("║  Orders Filled:     ", setup.ordersFilled);
    Print("║  Orders Cancelled:  ", setup.ordersCancelled);
