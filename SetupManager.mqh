@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|                                            SetupManager.mqh       |
-//|                    Gold Engulfing EA - Setup State Machine v3.0   |
+//|                    Gold Engulfing EA - Setup State Machine v4.0   |
 //|                    ✅ TICKET-BASED VALIDATION SYSTEM              |
 //+------------------------------------------------------------------+
 
