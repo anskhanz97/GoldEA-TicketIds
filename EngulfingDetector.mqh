@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| EngulfingDetector.mqh -                                         |
-//| Fixed for v2.1 - Orders now placed for ALL untapped patterns    |
+//| Fixed for v4.0 - Orders now placed for ALL untapped patterns    |
 //+------------------------------------------------------------------+
 
 void ScanHistoricalData() {
