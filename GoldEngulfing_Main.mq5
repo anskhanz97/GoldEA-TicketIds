@@ -8,18 +8,15 @@
 #property version   "4.00"
 #property strict
 
-// Include all module files (EXCEPT HistoryReconstructor.mqh)
 #include "Include/Config.mqh"
 #include "Include/Utils.mqh"
 #include "Include/StorageSystem.mqh"
 #include "Include/VisualManager.mqh"
 #include "Include/OrderManager.mqh"
-#include "Include/SetupHelpers.mqh"
-#include "Include/SetupManager.mqh"
+#include "Include/SetupHelpers.mqh"      // ✅ Move BEFORE SetupManager
+#include "Include/SetupManager.mqh"       // ✅ Now can use functions from SetupHelpers
 #include "Include/TableLogger.mqh"
 #include "Include/EngulfingDetector.mqh"
-// ❌ REMOVED: #include "Include/HistoryReconstructor.mqh"
-// ❌ REMOVED: #include "Include/HistoryDiagnostics.mqh"
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                    |
@@ -269,7 +266,7 @@ int OnInit() {
 }
 
 //+------------------------------------------------------------------+
-//| ✅ FIXED: Validate Active Setups - CHECK MT5 HISTORY FIRST!      |
+//| ✅ ENHANCED: Validate Active Setups with Clear Status Logging    |
 //+------------------------------------------------------------------+
 void ValidateActiveSetupsFromTickets() {
    Print("\n🔍 Validating active setups (checking MT5 history first)...\n");
@@ -288,7 +285,23 @@ void ValidateActiveSetupsFromTickets() {
       
       validatedCount++;
       
-      // ✅ CRITICAL FIX: Check MT5 history FIRST, before checking stored tickets
+      // ✅ NEW: Determine setup status for logging
+      string statusLabel = "";
+      if(g_allSetups[i].state == SETUP_UNTAPPED) {
+         statusLabel = "UNTAPPED (Active)";
+      } else if(g_allSetups[i].tradeStatus == TRADE_STATUS_MISSED) {
+         statusLabel = "MISSED (EA was off)";
+      } else if(g_allSetups[i].tradeStatus == TRADE_STATUS_TRADED) {
+         statusLabel = "TRADED";
+      }
+      
+      // ✅ ENHANCED: Print status in the header
+      if(InpDebugMode) {
+         Print("   🔎 Checking MT5 history for: ", g_allSetups[i].setupID, 
+               " | ", statusLabel);
+      }
+               
+      // Check MT5 history FIRST, before checking stored tickets
       bool hasTradesInMT5 = CheckMT5HistoryForSetup(g_allSetups[i]);
       int storedTickets = ArraySize(g_allSetups[i].orderTickets);
       
@@ -333,6 +346,10 @@ void ValidateActiveSetupsFromTickets() {
                RedrawTappedLines(g_allSetups[i]);
                updatedCount++;
             }
+         } else if(g_allSetups[i].tradeStatus == TRADE_STATUS_MISSED) {
+            // ✅ NEW: Special logging for confirmed MISSED setups
+               Print("      ⚠️ Confirmed MISSED: No orders placed (EA was off when tapped)");
+               Print("      📊 Stored tickets: 0 (as expected for MISSED setup)");
          }
          continue;
       }
@@ -508,7 +525,7 @@ void OnTick() {
 }
 
 //+------------------------------------------------------------------+
-//| Expert timer function                                            |
+//| Expert timer function (Updated with Position Tracking)           |
 //+------------------------------------------------------------------+
 void OnTimer() {
    // Real-time tap detection
@@ -517,11 +534,120 @@ void OnTimer() {
    // Sync visual lines
    SyncVisualLinesWithState();
    
-   // Periodic ticket validation (every 60 seconds)
+   // ✅ CRITICAL: Periodic position verification (backup for OnTradeTransaction)
+   // This ensures we catch any trades that happened while EA was off
+   for(int i = 0; i < ArraySize(g_allSetups); i++) {
+      if(!g_allSetups[i].isComplete && g_allSetups[i].state == SETUP_TAPPED) {
+         
+         // Update order status
+         UpdateOrderStatusWithPositions(g_allSetups[i]);
+         
+         // Check for completion
+         if(AreAllOrdersHandled(g_allSetups[i])) {
+            MarkSetupAsComplete(i);
+         }
+      }
+   }
+   
+   // Periodic validation (every 60 seconds)
    static datetime lastValidation = 0;
    if(TimeCurrent() - lastValidation >= 60) {
       ValidateActiveSetupsFromTickets();
+      SaveSetupsToFile();
       lastValidation = TimeCurrent();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| ✅ NEW: Update Order Status INCLUDING Position Tracking          |
+//+------------------------------------------------------------------+
+void UpdateOrderStatusWithPositions(EngulfingSetup &setup) {
+   if(InpDebugMode) {
+      Print("🔍 UpdateOrderStatusWithPositions for ", setup.setupID);
+   }
+   
+   // If no tickets stored, use legacy method
+   if(ArraySize(setup.orderTickets) == 0) {
+      UpdateOrderStatusLegacy(setup);
+      return;
+   }
+   
+   // Reset counters
+   int pendingCount = 0;
+   int filledCount = 0;
+   int cancelledCount = 0;
+   int openPositions = 0;
+   
+   ArrayResize(setup.filledTickets, 0);
+   ArrayResize(setup.cancelledTickets, 0);
+   
+   // Check each stored ticket
+   for(int i = 0; i < ArraySize(setup.orderTickets); i++) {
+      ulong ticket = setup.orderTickets[i];
+      
+      // Check if still pending
+      if(OrderSelect(ticket)) {
+         pendingCount++;
+         continue;
+      }
+      
+      // Check in history
+      if(HistoryOrderSelect(ticket)) {
+         ENUM_ORDER_STATE state = (ENUM_ORDER_STATE)HistoryOrderGetInteger(ticket, ORDER_STATE);
+         
+         if(state == ORDER_STATE_FILLED) {
+            filledCount++;
+            int idx = ArraySize(setup.filledTickets);
+            ArrayResize(setup.filledTickets, idx + 1);
+            setup.filledTickets[idx] = ticket;
+            
+            // ✅ CRITICAL: Check if this filled order has an OPEN position
+            bool positionStillOpen = false;
+            
+            // Get position ID from this order
+            if(HistorySelect(setup.createdTime, TimeCurrent())) {
+               for(int j = 0; j < HistoryDealsTotal(); j++) {
+                  ulong dealTicket = HistoryDealGetTicket(j);
+                  
+                  if(HistoryDealGetInteger(dealTicket, DEAL_ORDER) == ticket &&
+                     HistoryDealGetInteger(dealTicket, DEAL_ENTRY) == DEAL_ENTRY_IN) {
+                     
+                     // Found entry deal - get position ID
+                     ulong positionID = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+                     
+                     // Check if position is still open
+                     for(int k = 0; k < PositionsTotal(); k++) {
+                        ulong posTicket = PositionGetTicket(k);
+                        if(posTicket == positionID) {
+                           positionStillOpen = true;
+                           openPositions++;
+                           break;
+                        }
+                     }
+                     break;
+                  }
+               }
+            }
+            
+         } else if(state == ORDER_STATE_CANCELED) {
+            cancelledCount++;
+            int idx = ArraySize(setup.cancelledTickets);
+            ArrayResize(setup.cancelledTickets, idx + 1);
+            setup.cancelledTickets[idx] = ticket;
+         }
+      }
+   }
+   
+   // Update setup tracking
+   setup.ordersPlaced = ArraySize(setup.orderTickets);
+   setup.ordersFilled = filledCount;
+   setup.ordersCancelled = cancelledCount;
+   setup.positionsOpen = openPositions;
+   
+   if(InpDebugMode) {
+      Print("📊 ", setup.setupID, ": ", pendingCount, " pending | ", 
+            filledCount, " filled | ", openPositions, " open positions | ",
+            cancelledCount, " cancelled");
    }
 }
 
@@ -563,5 +689,253 @@ void SyncVisualLinesWithState() {
       }
    }
 }
+//+------------------------------------------------------------------+
+//|                    REAL-TIME TRADE TRACKING SYSTEM                |
+//|-------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
+//| ✅ Trade Transaction Handler (INSTANT Detection)                 |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(
+   const MqlTradeTransaction& trans,
+   const MqlTradeRequest& request,
+   const MqlTradeResult& result
+) {
+   // Only process our symbol
+   if(trans.symbol != _Symbol) return;
+   
+   // Get magic number based on transaction type
+   ulong magicNumber = 0;
+   
+   if(trans.type == TRADE_TRANSACTION_ORDER_DELETE || 
+      trans.type == TRADE_TRANSACTION_ORDER_ADD) {
+      // For order transactions, get magic from order
+      if(trans.order > 0) {
+         if(OrderSelect(trans.order)) {
+            magicNumber = OrderGetInteger(ORDER_MAGIC);
+         } else if(HistoryOrderSelect(trans.order)) {
+            magicNumber = HistoryOrderGetInteger(trans.order, ORDER_MAGIC);
+         }
+      }
+   } else if(trans.type == TRADE_TRANSACTION_DEAL_ADD) {
+      // For deal transactions, get magic from deal
+      if(trans.deal > 0 && HistoryDealSelect(trans.deal)) {
+         magicNumber = HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
+      }
+   }
+   
+   if(magicNumber == 0) return; // Not our trade or couldn't get magic
+   
+   // Find which setup this belongs to by checking magic number
+   int setupIndex = -1;
+   for(int i = 0; i < ArraySize(g_allSetups); i++) {
+      if(g_allSetups[i].magicNumber == magicNumber) {
+         setupIndex = i;
+         break;
+      }
+   }
+   
+   if(setupIndex < 0) return; // Not our trade
+   
+   // Handle different transaction types
+   switch(trans.type) {
+      case TRADE_TRANSACTION_ORDER_DELETE:
+         // Pending order cancelled/expired
+         HandleOrderCancellation(setupIndex, trans);
+         break;
+         
+      case TRADE_TRANSACTION_DEAL_ADD:
+         // Deal executed (order filled OR position closed)
+         if(trans.deal_type == DEAL_TYPE_BUY || trans.deal_type == DEAL_TYPE_SELL) {
+            // Check if this is an ENTRY or EXIT deal
+            if(HistoryDealSelect(trans.deal)) {
+               ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+               
+               if(entryType == DEAL_ENTRY_IN) {
+                  // Order filled → became position
+                  HandleOrderFill(setupIndex, trans);
+               } else if(entryType == DEAL_ENTRY_OUT) {
+                  // Position closed
+                  HandlePositionClose(setupIndex, trans);
+               }
+            }
+         }
+         break;
+   }
+}
+//+------------------------------------------------------------------+
+//| ✅ Handle Order Fill (Pending → Position)                        |
+//+------------------------------------------------------------------+
+void HandleOrderFill(int setupIndex, const MqlTradeTransaction& trans) {
+   g_allSetups[setupIndex].ordersFilled++;
+   g_allSetups[setupIndex].positionsOpen++;
+   g_allSetups[setupIndex].lastActivityTime = TimeCurrent();
+   
+   if(g_allSetups[setupIndex].firstFillTime == 0) {
+      g_allSetups[setupIndex].firstFillTime = TimeCurrent();
+   }
+   
+   // Add to filledTickets array if not already there
+   bool alreadyTracked = false;
+   for(int i = 0; i < ArraySize(g_allSetups[setupIndex].filledTickets); i++) {
+      if(g_allSetups[setupIndex].filledTickets[i] == trans.order) {
+         alreadyTracked = true;
+         break;
+      }
+   }
+   
+   if(!alreadyTracked) {
+      int idx = ArraySize(g_allSetups[setupIndex].filledTickets);
+      ArrayResize(g_allSetups[setupIndex].filledTickets, idx + 1);
+      g_allSetups[setupIndex].filledTickets[idx] = trans.order;
+   }
+   
+   int pendingCount = CountPendingOrders(g_allSetups[setupIndex].setupID);
+   
+   Print("✅ ", g_allSetups[setupIndex].setupID, " - Order FILLED @ ", 
+         DoubleToString(trans.price, _Digits));
+   Print("   → Filled: ", g_allSetups[setupIndex].ordersFilled, "/", 
+         g_allSetups[setupIndex].ordersPlaced, 
+         " | Pending: ", pendingCount, 
+         " | Open: ", g_allSetups[setupIndex].positionsOpen);
+   
+   SaveSetupsToFile();
+}
+
+//+------------------------------------------------------------------+
+//| ✅ Handle Position Close (TP/SL/Manual) - THE KEY FUNCTION!      |
+//+------------------------------------------------------------------+
+void HandlePositionClose(int setupIndex, const MqlTradeTransaction& trans) {
+   // ✅ CRITICAL: Decrease open positions count
+   if(g_allSetups[setupIndex].positionsOpen > 0) {
+      g_allSetups[setupIndex].positionsOpen--;
+   }
+   
+   g_allSetups[setupIndex].positionsClosed++;
+   g_allSetups[setupIndex].lastActivityTime = TimeCurrent();
+   
+   // Get deal details
+   double profit = 0;
+   string comment = "";
+   
+   if(HistoryDealSelect(trans.deal)) {
+      profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT);
+      double commission = HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+      double swap = HistoryDealGetDouble(trans.deal, DEAL_SWAP);
+      comment = HistoryDealGetString(trans.deal, DEAL_COMMENT);
+      
+      profit = profit + commission + swap; // Net profit
+   }
+   
+   // Determine close reason
+   string reason = "UNKNOWN";
+   
+   // Check comment for TP/SL
+   if(StringFind(comment, "tp") >= 0 || StringFind(comment, "TP") >= 0) {
+      g_allSetups[setupIndex].tpHits++;
+      reason = "TP ✅";
+      
+      // ✅ FIRST TP HIT LOGIC
+      if(!g_allSetups[setupIndex].firstTPHit) {
+         g_allSetups[setupIndex].firstTPHit = true;
+         g_allSetups[setupIndex].hadFirstTP = true;
+         
+         // Cancel ALL remaining pending orders
+         int cancelled = CancelPendingOrders(g_allSetups[setupIndex].setupID);
+         g_allSetups[setupIndex].ordersCancelled += cancelled;
+         
+         Print("🎯 ", g_allSetups[setupIndex].setupID, " - FIRST TP HIT!");
+         Print("   → Cancelled ", cancelled, " pending orders");
+         
+         SendAlert("🎯 First TP Hit: " + g_allSetups[setupIndex].setupID);
+      }
+      
+   } //else if(StringFind(comment, "sl") >= 0 || StringFind(comment, "SL") >= 0) {
+     // g_allSetups[setupIndex].slHits++;
+     // reason = "SL ❌";
+      
+      // ✅ CANCEL REMAINING ORDERS ON SL TOO
+      //if(g_allSetups[setupIndex].positionsOpen == 0) { // Last position closed at SL
+        // int cancelled = CancelPendingOrders(g_allSetups[setupIndex].setupID);
+        // if(cancelled > 0) {
+        //    g_allSetups[setupIndex].ordersCancelled += cancelled;
+        //    Print("   → Cancelled ", cancelled, " pending orders (SL hit)");
+        // }
+      //}
+      
+  // } 
+  else {
+      g_allSetups[setupIndex].manualCloses++;
+      reason = "MANUAL 🔧";
+      
+      // ✅ CANCEL REMAINING ORDERS ON MANUAL CLOSE TOO
+      int cancelled = CancelPendingOrders(g_allSetups[setupIndex].setupID);
+      if(cancelled > 0) {
+         g_allSetups[setupIndex].ordersCancelled += cancelled;
+         Print("   → Cancelled ", cancelled, " pending orders (manual close)");
+      }
+   }
+   
+   // Update financials
+   g_allSetups[setupIndex].totalProfit += profit;
+   if(profit > 0) {
+      g_allSetups[setupIndex].grossProfit += profit;
+      if(profit > g_allSetups[setupIndex].largestWin) {
+         g_allSetups[setupIndex].largestWin = profit;
+      }
+   } else {
+      g_allSetups[setupIndex].grossLoss += profit;
+      if(profit < g_allSetups[setupIndex].largestLoss) {
+         g_allSetups[setupIndex].largestLoss = profit;
+      }
+   }
+   
+   int pendingCount = CountPendingOrders(g_allSetups[setupIndex].setupID);
+   
+   Print("💰 ", g_allSetups[setupIndex].setupID, " - Position CLOSED (", reason, ")");
+   Print("   → P/L: $", DoubleToString(profit, 2), 
+         " | Open: ", g_allSetups[setupIndex].positionsOpen,
+         " | Pending: ", pendingCount);
+   Print("   → Total P/L: $", DoubleToString(g_allSetups[setupIndex].totalProfit, 2));
+   Print("   → TP:", g_allSetups[setupIndex].tpHits, 
+         " SL:", g_allSetups[setupIndex].slHits,
+         " Manual:", g_allSetups[setupIndex].manualCloses);
+   
+   // Check if setup is complete
+   if(pendingCount == 0 && g_allSetups[setupIndex].positionsOpen == 0) {
+      MarkSetupAsComplete(setupIndex);
+   }
+   
+   SaveSetupsToFile();
+   
+   // Display live status
+   if(InpEnableTableLogs) {
+      DisplayLiveSetupStatus(g_allSetups[setupIndex].setupID);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| ✅ Handle Order Cancellation                                     |
+//+------------------------------------------------------------------+
+void HandleOrderCancellation(int setupIndex, const MqlTradeTransaction& trans) {
+   g_allSetups[setupIndex].ordersCancelled++;
+   g_allSetups[setupIndex].lastActivityTime = TimeCurrent();
+   
+   // Add to cancelledTickets array
+   int idx = ArraySize(g_allSetups[setupIndex].cancelledTickets);
+   ArrayResize(g_allSetups[setupIndex].cancelledTickets, idx + 1);
+   g_allSetups[setupIndex].cancelledTickets[idx] = trans.order;
+   
+   int pendingCount = CountPendingOrders(g_allSetups[setupIndex].setupID);
+   int positionCount = g_allSetups[setupIndex].positionsOpen;
+   
+   Print("🚫 ", g_allSetups[setupIndex].setupID, " - Order cancelled #", trans.order);
+   Print("   → Pending: ", pendingCount, " | Open: ", positionCount);
+   
+   // Check if setup is now complete
+   if(pendingCount == 0 && positionCount == 0) {
+      MarkSetupAsComplete(setupIndex);
+   }
+   
+   SaveSetupsToFile();
+}
