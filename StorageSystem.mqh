@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|                                         StorageSystem.mqh         |
-//|                 Gold Engulfing EA - File Storage System v3.0      |
+//|                 Gold Engulfing EA - File Storage System v4.0      |
 //|                 ✅ TICKET-BASED PERSISTENT STORAGE                |
 //+------------------------------------------------------------------+
 
@@ -530,7 +530,7 @@ string ReadJSONFromFile(string filename) {
 //| Append to Backup File (Only if data changed)                     |
 //+------------------------------------------------------------------+
 void AppendToBackup(string json) {
-   string backupFile = "GoldEngulfing_backups.json";
+   string backupFile = "GoldEngulfing_TicketsBackups.json";
    
    int handle = FileOpen(backupFile, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(handle == INVALID_HANDLE) {
@@ -547,7 +547,7 @@ void AppendToBackup(string json) {
    
    // Write separator and timestamp
    string separator = "\n========================================\n";
-   separator += "Backup v3.0: " + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "\n";
+   separator += "Tickets_Backup v3.0: " + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "\n";
    separator += "========================================\n";
    
    FileWriteString(handle, separator);
