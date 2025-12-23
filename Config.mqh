@@ -1,12 +1,12 @@
 //+------------------------------------------------------------------+
 //|                                                       Config.mqh  |
 //|                              Gold Engulfing EA - Configuration    |
-//|                              v3.0 - TICKET-BASED TRACKING         |
+//|                              v4.0 - TICKET-BASED TRACKING         |
 //+------------------------------------------------------------------+
 
 //=== EA INFORMATION ===
-#define EA_NAME     "Gold Engulfing Scalper"
-#define EA_VERSION  "3.0"
+#define EA_NAME     "Gold Engulfing Ticket Based Scalper"
+#define EA_VERSION  "4.0"
 
 //=== TRADING PARAMETERS ===
 input group "=== Basic Settings ==="
@@ -42,8 +42,8 @@ input int InpLookbackDays = 14;                    // Historical Scan Days
 #define TRADE_STATUS_TRADED   1    // Orders placed & managed
 
 //=== FILE PATHS ===
-#define FILE_SETUPS    "GoldEngulfing_setups.json"
-#define FILE_LOGS      "GoldEngulfing_logs.json"
+#define FILE_SETUPS    "GoldEngulfing_TicketSetups.json"
+#define FILE_LOGS      "GoldEngulfing_TicketLogs.json"
 
 //=== CONSTANTS ===
 #define MAX_LOOKBACK_BARS  336    // 14 days * 24 hours
