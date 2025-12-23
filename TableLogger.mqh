@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|                                            TableLogger.mqh        |
-//|                    Gold Engulfing EA - Simplified Logger v2.1     |
+//|                    Gold Engulfing EA - Simplified Logger v4.0     |
 //|                    2-STATE SYSTEM Compatible                      |
 //+------------------------------------------------------------------+
 
@@ -211,4 +211,54 @@ void DisplayRecentEngulfing() {
    }
    Print("==============================================================================================\n");
 }
+
 //+------------------------------------------------------------------+
+//| Display Real-Time Setup Status (Add to TableLogger.mqh)          |
+//+------------------------------------------------------------------+
+void DisplayLiveSetupStatus(string setupID) {
+   int idx = FindSetupByID(setupID);
+   if(idx < 0) return;
+   
+   EngulfingSetup setup = g_allSetups[idx];
+   
+   int pendingCount = CountPendingOrders(setup.setupID);
+   
+   Print("\n╔════════════════════════════════════════════════════════════════╗");
+   Print("║ 📊 LIVE STATUS: ", setup.setupID);
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║ State: ", GetStateName(setup.state), 
+         " (", GetTradeStatusName(setup.tradeStatus), ")");
+   Print("║ Direction: ", setup.isBullish ? "BULLISH 📈" : "BEARISH 📉");
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║ 📋 ORDER EXECUTION:");
+   Print("║   Total Placed:     ", setup.ordersPlaced);
+   Print("║   Filled:           ", setup.ordersFilled, " ✅");
+   Print("║   Pending:          ", pendingCount, " ⏳");
+   Print("║   Cancelled:        ", setup.ordersCancelled, " 🚫");
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║ 💼 POSITIONS:");
+   Print("║   Currently Open:   ", setup.positionsOpen, " 📈");
+   Print("║   Closed:           ", setup.positionsClosed, " ✔");
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║ 🎯 CLOSE REASONS:");
+   Print("║   TP Hits:          ", setup.tpHits, " ✅");
+   Print("║   SL Hits:          ", setup.slHits, " ❌");
+   Print("║   Manual Closes:    ", setup.manualCloses, " 🔧");
+   Print("║   First TP Hit:     ", setup.firstTPHit ? "YES 🎯" : "NO");
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║ 💰 FINANCIALS:");
+   Print("║   Total P/L:        $", DoubleToString(setup.totalProfit, 2));
+   Print("║   Gross Profit:     $", DoubleToString(setup.grossProfit, 2));
+   Print("║   Gross Loss:       $", DoubleToString(setup.grossLoss, 2));
+   Print("║   Largest Win:      $", DoubleToString(setup.largestWin, 2));
+   Print("║   Largest Loss:     $", DoubleToString(setup.largestLoss, 2));
+   
+   if(setup.tpHits + setup.slHits > 0) {
+      double winRate = ((double)setup.tpHits / (setup.tpHits + setup.slHits)) * 100.0;
+      Print("║   Win Rate:         ", DoubleToString(winRate, 1), "%");
+   }
+   
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║ Complete: ", setup.isComplete ? "YES ✔" : "NO ⏳");
+   Print("╚════════════════════════════════════════════════════════════════╝\n");
+}
