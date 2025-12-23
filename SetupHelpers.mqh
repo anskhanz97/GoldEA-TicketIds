@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|                                            SetupHelpers.mqh       |
-//|                    Gold Engulfing EA - Helper Functions v3.0      |
+//|                    Gold Engulfing EA - Helper Functions v4.0      |
 //|                    ✅ COMPLETE IMPLEMENTATION                     |
 //+------------------------------------------------------------------+
 
@@ -56,14 +56,21 @@ void RevalidateUntappedSetups() {
 }
 
 //+------------------------------------------------------------------+
-//| ✅ NEW: Check MT5 History for Setup Trades (WITH DIAGNOSTICS)    |
+//| ✅ ENHANCED: Check MT5 History + Show Pending Orders Info        |
 //+------------------------------------------------------------------+
 bool CheckMT5HistoryForSetup(EngulfingSetup &setup) {
    // 🔍 DIAGNOSTIC: Show what we're looking for
    if(InpDebugMode) {
-      Print("   🔎 Checking MT5 history for: ", setup.setupID);
       Print("      Magic: ", setup.magicNumber);
       Print("      Created: ", TimeToString(setup.createdTime, TIME_DATE|TIME_MINUTES));
+      
+       // ✅ NEW: Show pending orders count for active setups
+      if(setup.state == SETUP_UNTAPPED) {
+         int pendingCount = CountPendingOrders(setup.setupID);
+         if(pendingCount > 0) {
+            Print("      📊 Pending Orders: ", pendingCount, " (still active, not in history yet)");
+         }
+      }
    }
    
    // Load history from setup creation time (use engulfingTime for broader search)
@@ -79,7 +86,15 @@ bool CheckMT5HistoryForSetup(EngulfingSetup &setup) {
    int matchedOrders = 0;
    int filledOrders = 0;
    
-   if(InpDebugMode) Print("      📊 Total history orders: ", totalHistoryOrders);
+      if(InpDebugMode) {
+      // ✅ ENHANCED: Explain what "Total history orders" means
+      if(totalHistoryOrders == 0 && setup.state == SETUP_UNTAPPED) {
+         Print("      📊 Total history orders: ", totalHistoryOrders, 
+               " (Orders still pending, will appear here when filled/cancelled)");
+      } else {
+         Print("      📊 Total history orders: ", totalHistoryOrders);
+      }
+   }
    
    // ✅ FIX: Search by BOTH magic number AND comment (fallback)
    for(int i = 0; i < totalHistoryOrders; i++) {
@@ -414,7 +429,7 @@ bool SetupHasExistingOrders(string setupID) {
 }
 
 //+------------------------------------------------------------------+
-//| Can Place Orders for Setup?                                     |
+//| Can Place Orders for Setup? w/ DEBUG + Configurable Age Limit    |
 //+------------------------------------------------------------------+
 bool CanPlaceOrdersForSetup(EngulfingSetup &setup) {
    // Already placed?
@@ -437,8 +452,8 @@ bool CanPlaceOrdersForSetup(EngulfingSetup &setup) {
    
    // Check if setup is too old
    int ageInDays = (int)((TimeCurrent() - setup.engulfingTime) / 86400);
-   if(ageInDays > 7) {
-      DebugPrint("Setup too old: " + setup.setupID + " (" + IntegerToString(ageInDays) + " days)");
+   if(ageInDays > InpLookbackDays) {
+       DebugPrint("Setup too old: " + setup.setupID + " (" + IntegerToString(ageInDays) + " days)");
       return false;
    }
    
