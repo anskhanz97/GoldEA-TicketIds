@@ -683,3 +683,14 @@ void ManualRecoveryFromMT5() {
 }
 
 //+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Check if User is Manually Closing All Positions                  |
+//+------------------------------------------------------------------+
+bool IsUserClosingAllPositions(EngulfingSetup &setup) {
+   // If only 1 position remains and it's being closed manually
+   return (setup.positionsOpen == 1 && setup.manualCloses > 0);
+}
+
+//+-------------------------------------------------------------------+
+
