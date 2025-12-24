@@ -647,7 +647,7 @@ void UpdateOrderStatusWithPositions(EngulfingSetup &setup) {
    if(InpDebugMode) {
       Print("📊 ", setup.setupID, ": ", pendingCount, " pending | ", 
             filledCount, " filled | ", openPositions, " open positions | ",
-            cancelledCount, " cancelled");
+            setup.positionsClosed, " closed | ", cancelledCount, " cancelled");
    }
 }
 
@@ -670,7 +670,7 @@ void CheckUntappedSetupsRealTime() {
 }
 
 //+------------------------------------------------------------------+
-//| Sync Visual Lines with State                                    |
+//| Sync Visual Lines with State                                     |
 //+------------------------------------------------------------------+
 void SyncVisualLinesWithState() {
    for(int i = 0; i < ArraySize(g_allSetups); i++) {
@@ -797,13 +797,14 @@ void HandleOrderFill(int setupIndex, const MqlTradeTransaction& trans) {
    Print("   → Filled: ", g_allSetups[setupIndex].ordersFilled, "/", 
          g_allSetups[setupIndex].ordersPlaced, 
          " | Pending: ", pendingCount, 
-         " | Open: ", g_allSetups[setupIndex].positionsOpen);
+         " | Open: ", g_allSetups[setupIndex].positionsOpen,
+         " | Closed: ", g_allSetups[setupIndex].positionsClosed);
    
    SaveSetupsToFile();
 }
 
 //+------------------------------------------------------------------+
-//| ✅ Handle Position Close (TP/SL/Manual) - THE KEY FUNCTION!      |
+//| ✅ Handle Position Close (TP/SL/Manual) - ENHANCED VERSION       |
 //+------------------------------------------------------------------+
 void HandlePositionClose(int setupIndex, const MqlTradeTransaction& trans) {
    // ✅ CRITICAL: Decrease open positions count
@@ -829,6 +830,7 @@ void HandlePositionClose(int setupIndex, const MqlTradeTransaction& trans) {
    
    // Determine close reason
    string reason = "UNKNOWN";
+   bool isManualClose = false;
    
    // Check comment for TP/SL
    if(StringFind(comment, "tp") >= 0 || StringFind(comment, "TP") >= 0) {
@@ -850,30 +852,14 @@ void HandlePositionClose(int setupIndex, const MqlTradeTransaction& trans) {
          SendAlert("🎯 First TP Hit: " + g_allSetups[setupIndex].setupID);
       }
       
-   } //else if(StringFind(comment, "sl") >= 0 || StringFind(comment, "SL") >= 0) {
-     // g_allSetups[setupIndex].slHits++;
-     // reason = "SL ❌";
+   } else if(StringFind(comment, "sl") >= 0 || StringFind(comment, "SL") >= 0) {
+      g_allSetups[setupIndex].slHits++;
+      reason = "SL ❌";
       
-      // ✅ CANCEL REMAINING ORDERS ON SL TOO
-      //if(g_allSetups[setupIndex].positionsOpen == 0) { // Last position closed at SL
-        // int cancelled = CancelPendingOrders(g_allSetups[setupIndex].setupID);
-        // if(cancelled > 0) {
-        //    g_allSetups[setupIndex].ordersCancelled += cancelled;
-        //    Print("   → Cancelled ", cancelled, " pending orders (SL hit)");
-        // }
-      //}
-      
-  // } 
-  else {
+   } else {
       g_allSetups[setupIndex].manualCloses++;
       reason = "MANUAL 🔧";
-      
-      // ✅ CANCEL REMAINING ORDERS ON MANUAL CLOSE TOO
-      int cancelled = CancelPendingOrders(g_allSetups[setupIndex].setupID);
-      if(cancelled > 0) {
-         g_allSetups[setupIndex].ordersCancelled += cancelled;
-         Print("   → Cancelled ", cancelled, " pending orders (manual close)");
-      }
+      isManualClose = true;
    }
    
    // Update financials
@@ -895,11 +881,27 @@ void HandlePositionClose(int setupIndex, const MqlTradeTransaction& trans) {
    Print("💰 ", g_allSetups[setupIndex].setupID, " - Position CLOSED (", reason, ")");
    Print("   → P/L: $", DoubleToString(profit, 2), 
          " | Open: ", g_allSetups[setupIndex].positionsOpen,
+         " | Closed: ", g_allSetups[setupIndex].positionsClosed, // ✅ ADDED
          " | Pending: ", pendingCount);
    Print("   → Total P/L: $", DoubleToString(g_allSetups[setupIndex].totalProfit, 2));
    Print("   → TP:", g_allSetups[setupIndex].tpHits, 
          " SL:", g_allSetups[setupIndex].slHits,
          " Manual:", g_allSetups[setupIndex].manualCloses);
+   
+   // ✅ NEW: Cancel pending orders on ANY manual close
+   if(isManualClose && pendingCount > 0) {
+      Print("🔧 MANUAL CLOSE DETECTED - Cancelling ", pendingCount, " pending orders...");
+      int cancelled = CancelPendingOrders(g_allSetups[setupIndex].setupID);
+      g_allSetups[setupIndex].ordersCancelled += cancelled;
+      
+      if(cancelled > 0) {
+         Print("   ✅ Cancelled ", cancelled, " pending orders");
+         SendAlert("🔧 Manual Close: Cancelled " + IntegerToString(cancelled) + " orders");
+      }
+      
+      // Update pending count
+      pendingCount = CountPendingOrders(g_allSetups[setupIndex].setupID);
+   }
    
    // Check if setup is complete
    if(pendingCount == 0 && g_allSetups[setupIndex].positionsOpen == 0) {
