@@ -255,3 +255,4 @@ string FormatPrice(double price) {
 string FormatTime(datetime time) {
    return TimeToString(time, TIME_DATE|TIME_MINUTES);
 }
+
