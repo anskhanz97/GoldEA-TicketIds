@@ -1,3 +1,11 @@
+## GoldEA-TicketIds
+
+Personal MQL5 Expert Advisor exploring timestamp-based setup IDs, ticket-based history detection, deterministic duplicate prevention, persistent storage, and modular trade lifecycle management.
+
+This is an experimental trading system for research and engineering practice, not financial advice or a promise of trading performance. The original strategy notes and implementation details follow.
+
+---
+
 My Strategy is works only on H1 Timeframe works only on Gold/XAUUSD and is completely based on Engulfing Candles (two candles opposite in color), when Next Candles BODY/New Candles BODY / Fresh Candles BODY (Candle 1) totally engulfs the Body of Previous Candle (Candle 2) is creates an Engulfing Setup to trade.  Keeping the Opening and Closing in mind i also added a Gap Tolerance of 0.20 Points. And decided to set the Minimum Body size of Engulfed Candle to be 2 Pips. 
 i use the SL of 4$ and TP of 8$. However, Once the Engulfing is Complete/ Setup is Created. 
 We call it the UnTapped Setup as it was just completed/formed. And script automatically draws Yellow Dotted lines on top and bottom of Range of Engulfed Candles Body that extends with time towards right side only unless until price taps into this range. 
